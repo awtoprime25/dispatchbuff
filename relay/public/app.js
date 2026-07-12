@@ -560,6 +560,7 @@ function renderOutputChunk(inner) {
 }
 
 function addLiveTerminalBubble() {
+  clearEmptyState();
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-in msg-live-terminal';
   const col = document.createElement('div');
@@ -600,6 +601,7 @@ function scheduleReconnect(session) {
 function newId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 function addSystem(text, kind) {
+  clearEmptyState();
   const wrap = document.createElement('div');
   wrap.className = 'msg system-msg';
   const pill = document.createElement('span');
@@ -616,6 +618,7 @@ function formatTime(ts) {
 }
 
 function addBubble(role, text, ts) {
+  clearEmptyState();
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (role === 'sent' ? 'msg-out' : 'msg-in');
   const col = document.createElement('div');
@@ -708,6 +711,16 @@ function renderCodeBlock(lang, code) {
   wrap.appendChild(head);
   wrap.appendChild(pre);
   return wrap;
+}
+
+// Real content arriving (bubble, system pill, live terminal) must remove
+// the "No messages yet" placeholder -- it was only ever cleared by
+// clearChat(), so a fresh page load that goes straight to real messages
+// (e.g. reconnecting after the WS dropped) left it sitting there
+// alongside the new content, splitting `.messages`' scroll between two
+// tall siblings instead of one.
+function clearEmptyState() {
+  $messages.querySelector('.empty')?.remove();
 }
 
 function showEmptyState() {
