@@ -93,6 +93,26 @@ function tick(jsQR) {
   requestAnimationFrame(() => tick(jsQR));
 }
 
+// Paste-the-whole-link shortcut: if what lands in the session field is a
+// full pairing URL (copied straight from the PC's `dispatch pair` output),
+// pull session+code out of it and submit — no need to juggle two fields.
+function tryAutoFillFromPastedLink() {
+  const val = ($session.value || '').trim();
+  if (!/^https?:\/\//i.test(val)) return false;
+  let parsed;
+  try { parsed = new URL(val); } catch { return false; }
+  const s = parsed.searchParams.get('session') || '';
+  const c = (parsed.searchParams.get('code') || '').trim().toUpperCase();
+  if (!s || !/^[A-Z0-9]{6}$/.test(c)) return false;
+  $session.value = s;
+  $code.value = c;
+  $code.classList.add('auto-filled');
+  setStatus('Link recognised — pairing…');
+  $form.requestSubmit();
+  return true;
+}
+$session.addEventListener('input', tryAutoFillFromPastedLink);
+
 // Session ID: URL param (QR/manual link) wins, else the last one typed here.
 $session.value = urlSessionId || localStorage.getItem(SESSION_KEY) || '';
 

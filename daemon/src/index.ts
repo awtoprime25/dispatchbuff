@@ -313,12 +313,14 @@ program.command('pair')
       process.exit(1);
     }
     const pairUrl = `${relay.replace(/^http:/, 'https:')}/pair?session=${cfg.sessionId}&code=${code}`;
-    console.log('\n┌─ DispatchFreeBuff Pairing ─────────────────────┐');
-    console.log('│ Scan QR, or open on your iPhone:               │');
-    console.log(`│  ${pairUrl.padEnd(46)} │`);
-    console.log(`│                                                  │`);
-    console.log(`│  Code:  ${code}   (expires in ~${ttlMin} min)        │`);
-    console.log('└──────────────────────────────────────────────────┘\n');
+    // Plain, undecorated line — a boxed/padded URL is a pain to select
+    // cleanly in a terminal. Paste this whole thing into the "session ID"
+    // field on the phone and it auto-fills + submits (see mobile/pair.js).
+    console.log('\nDispatchFreeBuff Pairing');
+    console.log('─'.repeat(Math.min(60, pairUrl.length)));
+    console.log('Copy this link, paste it into the phone\'s session field:');
+    console.log(pairUrl);
+    console.log(`\nCode: ${code}  (expires in ~${ttlMin} min) · or scan the QR below\n`);
     try {
       qrcodeTerminal.generate(pairUrl, { small: false }); // larger blocks → easier to scan from a QR app
     } catch {
