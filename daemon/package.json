@@ -6,7 +6,7 @@
     "dispatch": "dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:node-pty --external:ws",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --banner:js=\"#!/usr/bin/env node\" --outfile=dist/index.js --external:node-pty --external:ws",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

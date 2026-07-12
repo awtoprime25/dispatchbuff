@@ -120,7 +120,11 @@ function newCode() {
   let s = ''; for (let i = 0; i < 6; i++) s += charset[bytes[i] % charset.length];
   return s;
 }
-function relayWsUrl(c: Config) { return c.relay.replace(/^http/, 'ws') + '/ws'; }
+function relayWsUrl(c: Config) {
+  const u = new URL(c.relay);
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+  return u.toString().replace(/\/+$/, '') + '/ws';
+}
 
 // ---------------------------------------------------------------------------
 // ANSI stripper + line buffer
@@ -299,7 +303,7 @@ program.command('pair')
       console.error('  Check your internet connection and the relay URL.');
       process.exit(1);
     }
-    const pairUrl = `${relay.replace(/^http/, 'https')}/pair?session=${cfg.sessionId}&code=${code}`;
+    const pairUrl = `${relay.replace(/^http:/, 'https:')}/pair?session=${cfg.sessionId}&code=${code}`;
     console.log('\n┌─ DispatchFreeBuff Pairing ─────────────────────┐');
     console.log('│ Scan QR, or open on your iPhone:               │');
     console.log(`│  ${pairUrl.padEnd(46)} │`);
@@ -707,7 +711,7 @@ program.command('status')
     console.log('CLI     :', `${cfg.command} ${cfg.args.join(' ')}`.trim());
     console.log('Config  :', FILE);
     try {
-      const res = await fetch(`${cfg.relay.replace(/^http/, 'https')}/health`);
+      const res = await fetch(`${cfg.relay.replace(/^http:/, 'https:')}/health`);
       const body = await res.text();
       console.log('Ping    : OK →', body);
     } catch (e) { console.log('Ping    : FAIL (', (e as Error).message, ')'); }
