@@ -289,6 +289,7 @@ program.command('init')
 program.command('pair')
   .description('Mint a pairing code from the relay, print QR (opens scan page on 127.0.0.1)')
   .option('-p, --port <n>', 'local HTTP port', String(PORT_PAIR_DEFAULT))
+  .option('--once', 'print the QR + save the HTML page, then exit — skip the local scan-page server (for launcher scripts that chain into `dispatch start`)')
   .action(async (opts) => {
     const cfg = requireConfig();
     const relay = cfg.relay.replace(/\/+$/, '');
@@ -326,6 +327,8 @@ program.command('pair')
     } catch (e) {
       console.log(`  (could not save HTML QR page: ${(e as Error).message})`);
     }
+    if (opts.once) return; // launcher mode — QR printed + HTML saved above, nothing left to do
+
     const html = renderPairPage(pairUrl, code);
     const port = parseInt(opts.port, 10);
     const server = http.createServer((_req, res) => {

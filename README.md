@@ -115,6 +115,7 @@ DispatchFreeBuff/
 | `dispatch init --relay <URL>`        | Create a session in `~/.dispatch/config.json` |
 | `dispatch init --command <cmd>`      | Use a custom CLI instead of `freebuff` |
 | `dispatch pair`                      | Print QR + 6-char code, open scan page on 127.0.0.1 |
+| `dispatch pair --once`               | Same, but print-and-exit (no local server) — for scripting |
 | `dispatch start`                     | Run daemon in foreground |
 | `dispatch start --no-watchdog`       | Disable auto-restart on Freebuff crash |
 | `dispatch start --max-restarts 0`    | Same as above |
@@ -123,6 +124,12 @@ DispatchFreeBuff/
 | `dispatch revoke`                    | Rotate sessionId + tokens; force re-pairing |
 
 On the **iOS PWA**: tap the home-screen icon to open the chat. Type your prompt at the bottom and hit **Send**. Status indicator in the header shows `● connected` / `● offline` / `◐ syncing`.
+
+### One-click start (Windows)
+
+`daemon/dispatch-start.bat` chains the usual restart routine into one double-click: prints the pairing QR, opens the pretty HTML fallback in your browser, then runs `dispatch start`. Needs `dispatch init` to have run once already (persists in `~/.dispatch/config.json` across reboots — you don't redo it every time).
+
+To get it on your desktop: right-click `dispatch-start.bat` in File Explorer → **Show more options** → **Send to** → **Desktop (create shortcut)**.
 
 ## Push notifications ("freebuff is done")
 
