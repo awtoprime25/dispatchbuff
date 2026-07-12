@@ -725,6 +725,20 @@ program.command('start')
         for (const c of missed) {
           sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: c.content, seq: c.seq, timestamp: c.ts, mode: c.mode });
         }
+      } else if (inner.t === 'resync') {
+        // Client reconnecting (e.g. iOS backgrounded the PWA and killed its
+        // WS) has no fresh chunks to wait for if freebuff already finished
+        // and went quiet while it was away — mode:'screen' only sends on
+        // *new* pty activity (see attachTerm), so the last thing the client
+        // rendered before disconnecting is what it's stuck showing until
+        // something writes again. Push the current screen immediately so
+        // reconnecting doesn't look frozen.
+        log('resync requested');
+        if (screenTerm.buffer.active.type === 'alternate') {
+          const content = renderScreen();
+          seq += 1; outBuf.push(seq, content, 'screen');
+          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content, seq, timestamp: Date.now(), mode: 'screen' });
+        }
       }
     }
 

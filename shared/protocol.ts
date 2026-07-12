@@ -75,7 +75,8 @@ export type EncryptedInner =
   | { t: 'key'; sessionId: SessionId; key: ControlKey; timestamp: number }
   | { t: 'output_chunk'; id: MessageId; sessionId: SessionId; content: string; seq: number; timestamp: number; mode?: OutputMode }
   | { t: 'system'; sessionId: SessionId; event: 'crashed' | 'restarted'; message?: string; timestamp: number }
-  | { t: 'sync_request'; sessionId: SessionId; sinceSeq: number; timestamp: number };
+  | { t: 'sync_request'; sessionId: SessionId; sinceSeq: number; timestamp: number }
+  | { t: 'resync'; sessionId: SessionId; timestamp: number };
 
 /**
  * 'line'   — one scrolled line of normal-buffer output; client appends a bubble.

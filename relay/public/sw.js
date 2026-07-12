@@ -51,20 +51,22 @@ self.addEventListener('fetch', (e) => {
 });
 
 // "freebuff went idle" push (see daemon idle-timer -> relay sendPush()).
-// Skip the system notification if a tab is already open and visible — the
-// in-app UI is enough, no need to double-notify.
+// Used to skip showing the notification when a tab reported itself
+// visible, to avoid double-notifying someone already looking at the
+// screen -- but iOS suspends a backgrounded PWA's JS without letting it
+// update that state first, so the *one* case this needs to fire reliably
+// (you've left the app) was exactly the case a stale "visible" silently
+// swallowed. Always show it; a redundant banner while you're already
+// looking is a much smaller cost than a missed one.
 self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch {}
   e.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
-      if (clients.some(c => c.visibilityState === 'visible')) return;
-      return self.registration.showNotification(data.title || 'DispatchFreeBuff', {
-        body: data.body || 'freebuff finished',
-        icon: '/icon-180.png',
-        badge: '/icon-180.png',
-        tag: 'dispatch-idle',
-      });
+    self.registration.showNotification(data.title || 'DispatchFreeBuff', {
+      body: data.body || 'freebuff finished',
+      icon: '/icon-180.png',
+      badge: '/icon-180.png',
+      tag: 'dispatch-idle',
     })
   );
 });

@@ -388,6 +388,12 @@ function connect() {
       session.outSeq = 0; session.inSeq = 0;
       setAuth('off');
       setStatus('connected', 'connected');
+      // Reconnecting (e.g. iOS suspended the WS while backgrounded) has
+      // nothing to wait for if freebuff already finished and went quiet —
+      // ask the daemon for the current screen so the terminal doesn't sit
+      // frozen on whatever was last rendered before the drop.
+      const a = auth();
+      try { ws.send(JSON.stringify({ v: PROTO_V, type: 'plain', t: 'resync', sessionId: a.sessionId, timestamp: Date.now() })); } catch {}
       flushPendingPrompts(session);
       return;
     }
