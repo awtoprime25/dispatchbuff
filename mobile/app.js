@@ -105,6 +105,7 @@ $tabBtns.forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 // a new entry to be added rather than typing the path by hand.
 const PROJECTS = [
   { label: 'DispatchFreeBuff', path: 'C:/Users/Walter/Desktop/claudiofile/PROJETOS/DispatchFreeBuff' },
+  { label: 'claudiofile', path: 'C:/Users/Walter/Desktop/claudiofile' },
   { label: 'Estagio', path: 'C:/xampp/htdocs/Estagio' },
 ];
 
