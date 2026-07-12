@@ -486,6 +486,14 @@ program.command('start')
     // instead of written straight to the pty.
     let idleTimer: NodeJS.Timeout | null = null;
     let awaitingIdleNotify = false;
+    // Guards against a race where the very first post-send check lands
+    // before freebuff has rendered "■ Esc" at all yet (slower machine/
+    // connection) -- absence of the busy hint then reads as "already done"
+    // and fires the push right after the prompt was sent, not after the
+    // reply. Only notify once we've actually observed busy=true at least
+    // once since this prompt, then seen it go false -- a real state
+    // transition, not a timing guess.
+    let sawBusySinceLastPrompt = false;
     const pendingPrompts: string[] = [];
     const IDLE_MS = 400;
     function armIdleTimer() {
@@ -494,13 +502,15 @@ program.command('start')
         idleTimer = null;
         if (pendingPrompts.length > 0) { writePrompt(pendingPrompts.shift()!); return; }
         if (!awaitingIdleNotify) return;
-        if (/■\s*Esc/.test(renderScreen())) { armIdleTimer(); return; } // still busy — keep polling
+        if (/■\s*Esc/.test(renderScreen())) { sawBusySinceLastPrompt = true; armIdleTimer(); return; } // busy — keep polling
+        if (!sawBusySinceLastPrompt) { armIdleTimer(); return; } // hasn't started responding yet — keep waiting
         awaitingIdleNotify = false;
         relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
       }, IDLE_MS);
     }
     function writePrompt(text: string) {
       awaitingIdleNotify = true;
+      sawBusySinceLastPrompt = false;
       // freebuff's Ink input box silently drops an Enter sent in the same
       // tick as the preceding text — confirmed by repro: text+\r written
       // back-to-back left the prompt sitting unsubmitted in the input box
