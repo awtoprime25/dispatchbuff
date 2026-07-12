@@ -99,6 +99,16 @@ function setTab(tab) {
 $tabBtns.forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 // ------------------------------------------------------------------
+// Known project folders — tap to switch freebuff's working directory
+// without typing a Windows path on a phone keyboard (see /cd in the
+// daemon). Static/hand-curated, same reasoning as SKILLS below: ask for
+// a new entry to be added rather than typing the path by hand.
+const PROJECTS = [
+  { label: 'DispatchFreeBuff', path: 'C:/Users/Walter/Desktop/claudiofile/PROJETOS/DispatchFreeBuff' },
+  { label: 'Estagio', path: 'C:/xampp/htdocs/Estagio' },
+];
+
+// ------------------------------------------------------------------
 // Saved commands: tap to send instantly. Static list — add an editor UI
 // if this needs to grow beyond a handful of presets.
 const DEFAULT_COMMANDS = [
@@ -157,6 +167,20 @@ function addSectionHeader(text) {
 }
 function renderCommands() {
   $commandsList.innerHTML = '';
+  addSectionHeader('switch project');
+  for (const p of PROJECTS) {
+    const row = document.createElement('div');
+    row.className = 'cmd-row';
+    const label = document.createElement('span');
+    label.className = 'cmd-label';
+    label.textContent = p.label;
+    const text = document.createElement('span');
+    text.className = 'cmd-text cmd-text-trunc';
+    text.textContent = p.path;
+    row.append(label, text);
+    row.addEventListener('click', () => sendPreset(`/cd ${p.path}`));
+    $commandsList.appendChild(row);
+  }
   addSectionHeader('quick commands');
   for (const c of DEFAULT_COMMANDS) {
     const row = document.createElement('div');
