@@ -653,7 +653,12 @@ program.command('start')
         // reflects this chunk (write() finishes parsing before the callback).
         screenTerm.write(chunk, () => {
           if (screenTerm.buffer.active.type === 'alternate') {
-            scheduleScreenFlush();
+            // freebuff never leaves the alternate screen even sitting idle at
+            // the input box (blinking cursor etc. keep emitting redraws) — only
+            // mirror while a turn is actually in flight, otherwise those idle
+            // redraws keep spawning fresh "live terminal" bubbles after the
+            // clean answer bubble already landed, burying it out of view.
+            if (awaitingIdleNotify) scheduleScreenFlush();
             return;
           }
           if (screenFlushTimer) { clearTimeout(screenFlushTimer); screenFlushTimer = null; }
