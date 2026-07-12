@@ -34,10 +34,9 @@ const HKDF_SALT = new Uint8Array(32); // zero salt; info disambiguates use
 const E2E_DISABLED = true;
 
 const $messages = document.getElementById('messages');
-const $keyControls = document.getElementById('key-controls');
+const $enterBtn = document.getElementById('enter-btn');
 const $input = document.getElementById('input');
 const $form = document.getElementById('composer');
-const $send = document.getElementById('send');
 const $dot = document.getElementById('status-dot');
 const $status = document.getElementById('status-text');
 const $auth = document.getElementById('auth-badge');
@@ -67,7 +66,6 @@ function setLastSeq(n) { localStorage.setItem(LAST_SEQ_KEY, String(n)); }
 function setStatus(state, label) {
   $dot.className = 'dot ' + ({ connected:'dot-on', syncing:'dot-syn', offline:'dot-off', securing:'dot-syn' }[state] || 'dot-off');
   $status.textContent = label || state;
-  if ($send) $send.disabled = state !== 'connected';
 }
 
 function setAuth(state) {
@@ -445,10 +443,12 @@ function renderPlainInner(session, msg) {
 // content of one in-place "live terminal" bubble instead of appending a new
 // bubble per redraw. mode:'line' (or missing, legacy) appends as before and
 // closes out the live bubble so the *next* screen snapshot starts a fresh one.
+// Key controls (arrows/Esc/Enter) stay visible always now, not just while a
+// live-terminal bubble is up — Enter doubles as the one send button (see
+// handleEnterAction), so it needs to be reachable in every state.
 let liveTerminalBubble = null;
 function setLiveTerminalBubble(bubble) {
   liveTerminalBubble = bubble;
-  $keyControls.classList.toggle('hidden', !bubble);
 }
 function renderOutputChunk(inner) {
   if (inner.mode === 'screen') {
@@ -664,8 +664,8 @@ $form.addEventListener('submit', async e => {
   } catch (err) { addSystem('send failed', 'bad'); }
 });
 
-// Arrow-key/Enter/Esc controls — shown while a live terminal bubble is up,
-// for menus freebuff shows that typed text can't answer (see key-controls).
+// Arrow/Esc controls for menus freebuff shows that typed text can't answer
+// (slash-command palette, confirmation prompts, etc).
 async function sendKey(key) {
   const session = currentSessionOrNull();
   if (!session || !session.ws || session.ws.readyState !== 1) return;
@@ -680,9 +680,18 @@ async function sendKey(key) {
   if (session.isStale()) return;
   try { session.ws.send(JSON.stringify(wire)); } catch {}
 }
-document.querySelectorAll('.key-btn').forEach(btn => {
+document.querySelectorAll('.key-btn[data-key]').forEach(btn => {
   btn.addEventListener('click', () => sendKey(btn.dataset.key));
 });
+
+// One Enter button for everything — no separate send button. If there's
+// typed text, submit it as a prompt; otherwise it's a raw Enter keypress
+// (confirms whatever's selected in a menu, same as the arrow buttons above).
+function handleEnterAction() {
+  if ($input.value.trim()) $form.requestSubmit();
+  else sendKey('enter');
+}
+$enterBtn.addEventListener('click', handleEnterAction);
 
 async function encryptEnvelope(session, inner) {
   if (!session?.sharedKey) return inner;
@@ -730,10 +739,10 @@ function autoResize() {
   $input.style.height = '1.4em';
   $input.style.height = Math.min(9, $input.scrollHeight / 16) + 'em';
 }
-$input.addEventListener('input', () => { autoResize(); const s = currentSessionOrNull(); $send.disabled = !s || !s.ws || s.ws.readyState !== 1 || !$input.value.trim(); });
+$input.addEventListener('input', autoResize);
 $input.addEventListener('keydown', e => {
   const session = currentSessionOrNull();
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $form.requestSubmit(); }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEnterAction(); }
   if (e.key === 'ArrowUp' && !$input.value && session && session.ws && session.ws.readyState === 1) {
     if (session.lastSent) { $input.value = session.lastSent; autoResize(); }
     e.preventDefault();

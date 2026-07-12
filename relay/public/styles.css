@@ -207,16 +207,17 @@ body.app {
 }
 
 /* --------------------------- Key controls ----------------------------
-   Shown only while a live terminal (mode:'screen') bubble is on screen —
-   freebuff sometimes drops into an arrow-key/Enter menu (e.g. "what should
-   I clear?") that typed text can't answer. Buttons send raw key sequences
-   straight into the pty (see shared/protocol.ts ControlKey). */
+   Always visible above the composer. Enter doubles as the one send button
+   (see handleEnterAction in app.js): submits typed text as a prompt, or —
+   with the composer empty — sends a raw Enter keypress, for freebuff menus
+   (slash-command palette, confirmations) that typed text can't answer.
+   The other keys send raw key sequences straight into the pty (see
+   shared/protocol.ts ControlKey). */
 .key-controls {
   display: flex; gap: 6px; justify-content: center;
   padding: 8px 12px 0;
   flex-shrink: 0;
 }
-.key-controls.hidden { display: none; }
 .key-btn {
   background: var(--bg-input);
   color: var(--text);
@@ -261,21 +262,6 @@ body.app {
 }
 .input::placeholder { color: var(--text-faded); }
 .input:focus { border-color: var(--accent-strong); box-shadow: 0 0 0 3px oklch(76% 0.17 152 / 0.2); }
-
-.send-btn {
-  background: var(--accent-strong);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  min-width: 44px; min-height: 44px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px; cursor: pointer;
-  flex: none;
-  transition: background var(--t), transform var(--t);
-}
-.send-btn:hover:not(:disabled) { background: var(--accent); }
-.send-btn:active:not(:disabled) { transform: scale(0.92); }
-.send-btn:disabled { background: var(--bg-elevated); color: var(--text-faded); cursor: not-allowed; }
 
 /* ------------------------------- Tab bar ------------------------------ */
 .tabbar {
