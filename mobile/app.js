@@ -322,6 +322,12 @@ $disconnectBtn.addEventListener('click', () => {
 // push handler). iOS Safari only delivers Web Push to a PWA installed via
 // Add to Home Screen (16.4+) — a plain browser tab or the Capacitor-wrapped
 // native shell can't receive it. Fails silently everywhere that's not true.
+//
+// sw.js was served at /sw.js but nothing ever called .register() on it —
+// every "push API: supported" reading downstream was moot because
+// navigator.serviceWorker.ready had nothing to ever resolve against.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
 function urlBase64ToUint8Array(base64) {
   const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(padded);
