@@ -446,18 +446,30 @@ program.command('start')
     // "freebuff went idle" push trigger: armed on every prompt sent + every
     // pty chunk received: if IDLE_MS passes with no further output, freebuff
     // is presumed done and we tell the relay to push-notify (see mobile/sw.js).
+    // Doubles as the busy/idle gate for pendingPrompts below — freebuff's TUI
+    // expects one prompt at a time (typed + Enter, wait for the reply) and
+    // silently drops/garbles prompts sent while it's still mid-response, so
+    // anything that arrives while awaitingIdleNotify is true gets queued
+    // instead of written straight to the pty.
     let idleTimer: NodeJS.Timeout | null = null;
     let awaitingIdleNotify = false;
+    const pendingPrompts: string[] = [];
     const IDLE_MS = 2500;
     function armIdleTimer() {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         idleTimer = null;
+        if (pendingPrompts.length > 0) { writePrompt(pendingPrompts.shift()!); return; }
         if (awaitingIdleNotify) {
           awaitingIdleNotify = false;
           relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
         }
       }, IDLE_MS);
+    }
+    function writePrompt(text: string) {
+      awaitingIdleNotify = true;
+      armIdleTimer();
+      try { term.write(text); term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
     }
     let seq = 0;
     let restarts = 0;
@@ -601,8 +613,12 @@ program.command('start')
     function handleInner(inner: EncryptedInner) {
       if (inner.t === 'prompt') {
         log(`prompt received (${inner.text.length} chars)`);
-        awaitingIdleNotify = true; armIdleTimer(); // fires even if the command produces no output at all
-        try { term.write(inner.text); term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
+        if (awaitingIdleNotify) {
+          pendingPrompts.push(inner.text);
+          log(`freebuff still busy — queued (${pendingPrompts.length} pending)`);
+        } else {
+          writePrompt(inner.text);
+        }
       } else if (inner.t === 'sync_request') {
         const missed = outBuf.since(inner.sinceSeq);
         log(`sync_request sinceSeq=${inner.sinceSeq} → replaying ${missed.length} chunks`);
