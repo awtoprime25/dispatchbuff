@@ -129,7 +129,14 @@ On the **iOS PWA**: tap the home-screen icon to open the chat. Type your prompt 
 
 `daemon/dispatch-start.bat` chains the usual restart routine into one double-click: prints the pairing QR, opens the pretty HTML fallback in your browser, then runs `dispatch start`. Needs `dispatch init` to have run once already (persists in `~/.dispatch/config.json` across reboots — you don't redo it every time).
 
-To get it on your desktop: right-click `dispatch-start.bat` in File Explorer → **Show more options** → **Send to** → **Desktop (create shortcut)**.
+To get it on your desktop with the Terminal Messenger icon (same one as the phone app), run once:
+
+```powershell
+cd daemon
+powershell -File create-shortcut.ps1
+```
+
+This creates `DispatchFreeBuff.lnk` on your Desktop, pointed at `dispatch-start.bat` with `dispatch-icon.ico`. Re-run it any time to recreate the shortcut (e.g. after moving the repo).
 
 ## Push notifications ("freebuff is done")
 
