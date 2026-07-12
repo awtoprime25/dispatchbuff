@@ -11,6 +11,8 @@
 //   client --prompt--> relay --> daemon (forward) + viewer (system event)
 //   daemon --output_chunk--> relay --> client + viewer (forward)
 import { createPairCode, redeemPairCode } from './pair.js';
+import { buildPushPayload, type VapidKeys, type PushSubscription as WebPushSubscription } from '@block65/webcrypto-web-push';
+import type { Env } from './index.js';
 
 const TAGS = ['daemon', 'client', 'viewer'] as const;
 type Tag = typeof TAGS[number];
@@ -42,10 +44,23 @@ export class RelayDO {
       return json(result, 200);
     }
 
+    if (url.pathname === '/push/subscribe' && req.method === 'POST') {
+      const body = await safeJson(req);
+      if (!body?.token || !body?.subscription?.endpoint) return json({ error: 'token, subscription required' }, 400);
+      const rec = (await this.state.storage.get(`token:${body.token}`)) as { sessionId: string; role: Tag; expiresAt: number } | null;
+      if (!rec || rec.expiresAt < Date.now()) return json({ error: 'invalid or expired token' }, 403);
+      // Keyed by token (one subscription per paired device). DO storage has
+      // no built-in TTL — cleared explicitly on /revoke, and lazily on a
+      // 404/410 push response (subscription gone) in sendPush() below.
+      await this.state.storage.put(`push:${body.token}`, body.subscription);
+      return json({ ok: true }, 200);
+    }
+
     if (url.pathname === '/revoke' && req.method === 'POST') {
       const body = await safeJson(req);
       if (!body?.token) return json({ error: 'token required' }, 400);
       await this.state.storage.delete(`token:${body.token}`);
+      await this.state.storage.delete(`push:${body.token}`);
       this.broadcastAll(JSON.stringify({
         type: 'system', sessionId: body.sessionId ?? '',
         event: 'revoked', message: 'token revoked', timestamp: Date.now(),
@@ -104,6 +119,12 @@ export class RelayDO {
 
     if (role === 'viewer') return; // viewer is read-only (only ping is allowed above)
 
+    if (role === 'daemon' && msg.type === 'notify' && msg.event === 'idle') {
+      // Relay-internal trigger, not forwarded over WS — see sendPush().
+      await this.sendPush();
+      return;
+    }
+
     if (role === 'daemon') {
       // Forward output + system events from daemon to clients + viewers
       for (const peer of this.state.getWebSockets('client')) if (peer !== ws) try { peer.send(message); } catch {}
@@ -152,6 +173,30 @@ export class RelayDO {
       for (const peer of this.state.getWebSockets(tag)) {
         try { peer.send(msg); } catch {}
       }
+    }
+  }
+
+  /** Push "freebuff is idle" to every subscribed device for this session. */
+  private async sendPush() {
+    if (!this.env.VAPID_PUBLIC_KEY || !this.env.VAPID_PRIVATE_KEY) return; // not configured
+    const vapid: VapidKeys = {
+      subject: this.env.VAPID_SUBJECT ?? 'mailto:dispatch@example.com',
+      publicKey: this.env.VAPID_PUBLIC_KEY,
+      privateKey: this.env.VAPID_PRIVATE_KEY,
+    };
+    const entries = await this.state.storage.list({ prefix: 'push:' });
+    const message = {
+      data: JSON.stringify({ title: 'DispatchFreeBuff', body: 'freebuff terminou — a resposta está pronta' }),
+      options: { ttl: 300 },
+    };
+    for (const [key, subscription] of entries) {
+      try {
+        const payload = await buildPushPayload(message, subscription as WebPushSubscription, vapid);
+        // payload.body is a Uint8Array — a valid fetch() BodyInit at runtime;
+        // the mismatch is @block65's own Uint8Array<T> vs workers-types' lib.
+        const res = await fetch((subscription as WebPushSubscription).endpoint, payload as RequestInit);
+        if (res.status === 404 || res.status === 410) await this.state.storage.delete(key); // gone — stop trying
+      } catch {}
     }
   }
 }

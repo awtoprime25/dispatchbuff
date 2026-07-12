@@ -105,7 +105,7 @@ DispatchFreeBuff/
 └── mobile/                     ← PWA source of truth (dev)
     ├── index.html  pair.html  manifest.json
     ├── app.js  pair.js  styles.css  sw.js
-    └── icon.svg
+    └── icon.svg  icon-180.png  icon-512.png
 ```
 
 ## Usage
@@ -123,6 +123,33 @@ DispatchFreeBuff/
 | `dispatch revoke`                    | Rotate sessionId + tokens; force re-pairing |
 
 On the **iOS PWA**: tap the home-screen icon to open the chat. Type your prompt at the bottom and hit **Send**. Status indicator in the header shows `● connected` / `● offline` / `◐ syncing`.
+
+## Push notifications ("freebuff is done")
+
+The daemon watches pty output for a 2.5s idle gap after a prompt and tells the relay to push a "freebuff finished" notification — so you don't have to keep the app open and watch it.
+
+**PWA only.** iOS only delivers Web Push to a PWA added to the home screen via Safari (16.4+). The sideloaded native `ios-app` shell is a plain WKWebView — it can't receive Web Push, and real APNs push (`@capacitor/push-notifications`) needs an Apple Developer Program membership ($99/yr) for the Push Notifications entitlement, which free/personal-team sideloading (Sideloadly/AltServer) doesn't get. If you upgrade to a paid account later, that's the path for native push; until then, use the PWA for notifications.
+
+Setup (one-time, per relay deploy):
+
+```bash
+# Generate a VAPID keypair (any P-256 ECDSA keypair in raw base64url works —
+# this doesn't have to be @block65/webcrypto-web-push specifically):
+node -e "
+const {subtle}=globalThis.crypto;
+const b64url=b=>Buffer.from(b).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']).then(async kp=>{
+  console.log('VAPID_PUBLIC_KEY='+b64url(await subtle.exportKey('raw',kp.publicKey)));
+  console.log('VAPID_PRIVATE_KEY='+(await subtle.exportKey('jwk',kp.privateKey)).d);
+});
+"
+
+cd relay
+npx wrangler secret put VAPID_PUBLIC_KEY   # paste the value above
+npx wrangler secret put VAPID_PRIVATE_KEY  # paste the value above — never commit this
+```
+
+Then edit `VAPID_SUBJECT` in `relay/wrangler.toml` (a `mailto:` contact, not secret) and redeploy. Until the secrets are set, `/push/vapid-public-key` returns 503 and the PWA just doesn't subscribe — everything else works normally.
 
 ## Developing the PWA
 
@@ -162,9 +189,6 @@ dispatch init --command /full/path/to/freebuff
 # or
 export FREEBUFF_BIN=/full/path/to/freebuff && dispatch init --command "$FREEBUFF_BIN"
 ```
-
-### "Apple Touch icon shows as a broken image"
-iOS requires a PNG for `apple-touch-icon` (SVG is rejected). Replace `mobile/icon.svg` with a 180×180 PNG and re-sync. For now, the PWA installs fine — only the home-screen icon looks off.
 
 ## Roadmap (post-MVP)
 

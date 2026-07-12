@@ -21,6 +21,13 @@ jobs:
 
       - run: npm install
       - run: npx cap add ios
+
+      # ios/ is regenerated from scratch above (gitignored, not committed), so
+      # re-stamp the Terminal Messenger icon + splash from resources/icon.png
+      # on every build instead of relying on Capacitor's placeholder assets.
+      - name: brand app icon + splash
+        run: npx capacitor-assets generate --ios --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColor '#000000' --splashBackgroundColorDark '#000000'
+
       - run: npx cap sync ios
 
       - name: pod install

@@ -9,6 +9,10 @@ binding = "ASSETS"
 
 [vars]
 ALLOWED_ORIGINS = "*"
+# Web Push VAPID contact — a URI push services may use to reach you if your
+# traffic looks abusive. Not secret; edit freely. The keypair itself is NOT
+# here — see README's push notifications section (wrangler secret put).
+VAPID_SUBJECT = "mailto:you@example.com"
 
 [[durable_objects.bindings]]
 name = "RELAY_DO"

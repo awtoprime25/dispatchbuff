@@ -14,5 +14,8 @@
     "@cloudflare/workers-types": "^4.20240712.0",
     "typescript": "^5.5.0",
     "wrangler": "^4.110.0"
+  },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2"
   }
 }

@@ -65,9 +65,18 @@ export interface EncryptedEnvelope {
 /** Inner payload of an `enc` envelope. JSON-stringified then encrypted. */
 export type EncryptedInner =
   | { t: 'prompt'; id: MessageId; sessionId: SessionId; text: string; timestamp: number }
-  | { t: 'output_chunk'; id: MessageId; sessionId: SessionId; content: string; seq: number; timestamp: number }
+  | { t: 'output_chunk'; id: MessageId; sessionId: SessionId; content: string; seq: number; timestamp: number; mode?: OutputMode }
   | { t: 'system'; sessionId: SessionId; event: 'crashed' | 'restarted'; message?: string; timestamp: number }
   | { t: 'sync_request'; sessionId: SessionId; sinceSeq: number; timestamp: number };
+
+/**
+ * 'line'   — one scrolled line of normal-buffer output; client appends a bubble.
+ * 'screen' — a full-screen (alternate-buffer) TUI snapshot; client replaces the
+ *            current live-terminal view instead of appending. Emitted when the
+ *            child CLI is a full-screen app (cursor-addressed redraws, e.g.
+ *            Ink-based TUIs) — see daemon/src/index.ts screenTerm handling.
+ */
+export type OutputMode = 'line' | 'screen';
 
 // ---- v1 legacy types (plaintext, no encryption) ----
 export interface PromptMessage {
@@ -88,6 +97,8 @@ export interface OutputChunk {
   /** Monotonic per-session sequence for dedupe + replay on iOS resume. */
   seq: number;
   timestamp: number;
+  /** See OutputMode. Absent = 'line' (legacy/default). */
+  mode?: OutputMode;
 }
 export interface SystemMessage {
   v?: 1 | 2;
@@ -117,9 +128,17 @@ export interface SyncRequest {
 export interface PingMessage { v?: 1 | 2; type: 'ping'; ts: number }
 export interface PongMessage { v?: 1 | 2; type: 'pong'; ts: number }
 
+/**
+ * Daemon → relay only. Plaintext and relay-visible by design (like ping) —
+ * it carries no session content, just "send a push to this session's
+ * subscribed devices". Emitted when freebuff goes idle after producing
+ * output (see daemon/src/index.ts idle-timer in `start`).
+ */
+export interface NotifyMessage { v: 2; type: 'notify'; event: 'idle' }
+
 // ---- v2 unions ----
 export type V2ClientMessage = E2EHandshake | EncryptedEnvelope | SyncRequest | PingMessage;
-export type V2ServerMessage = E2EHandshake | EncryptedEnvelope | OutputChunk | SystemMessage | PongMessage;
+export type V2ServerMessage = E2EHandshake | EncryptedEnvelope | OutputChunk | SystemMessage | PongMessage | NotifyMessage;
 
 // ---- v1 unions (legacy) ----
 export type V1ClientMessage = PromptMessage | SyncRequest | PingMessage;
@@ -154,6 +173,25 @@ export interface PairRedeemResponse {
 }
 
 export interface RevokeRequest { sessionId: SessionId; token: Token }
+
+// ------------------------------- /push API -------------------------------
+// Web Push (RFC 8030/8291/8292) for the "freebuff went idle" notification.
+// The relay holds the VAPID keypair; the daemon never sees it — it just
+// sends a plaintext `notify` over the existing WS (see NotifyMessage above).
+
+export interface WebPushKeys { p256dh: string; auth: string }
+/** Shape of `PushSubscription.toJSON()` from the browser's Push API. */
+export interface WebPushSubscriptionJSON {
+  endpoint: string;
+  expirationTime: number | null;
+  keys: WebPushKeys;
+}
+export interface PushSubscribeRequest {
+  sessionId: SessionId;
+  token: Token;
+  subscription: WebPushSubscriptionJSON;
+}
+export interface VapidPublicKeyResponse { publicKey: string }
 
 // ---------------------------- Rate limiting -----------------------------
 

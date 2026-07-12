@@ -1,9 +1,9 @@
-// mobile/sw.js — offline shell + cached CDN deps.
-const CACHE = 'dispatch-v8';
+// mobile/sw.js — offline shell + cached CDN deps + push notifications.
+const CACHE = 'dispatch-v10';
 const SHELL = [
   '/', '/index.html', '/pair.html',
   '/styles.css', '/app.js', '/pair.js',
-  '/manifest.json', '/icon.svg',
+  '/manifest.json', '/icon.svg', '/icon-180.png',
 ];
 const CDN = [
   'https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/core.min.js',
@@ -47,5 +47,34 @@ self.addEventListener('fetch', (e) => {
   }
   e.respondWith(
     caches.open(CACHE).then(c => c.match(e.request).then(r => r ?? fetch(e.request).catch(() => c.match('/'))))
+  );
+});
+
+// "freebuff went idle" push (see daemon idle-timer -> relay sendPush()).
+// Skip the system notification if a tab is already open and visible — the
+// in-app UI is enough, no need to double-notify.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch {}
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      if (clients.some(c => c.visibilityState === 'visible')) return;
+      return self.registration.showNotification(data.title || 'DispatchFreeBuff', {
+        body: data.body || 'freebuff finished',
+        icon: '/icon-180.png',
+        badge: '/icon-180.png',
+        tag: 'dispatch-idle',
+      });
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      for (const c of clients) if ('focus' in c) return c.focus();
+      if (self.clients.openWindow) return self.clients.openWindow('/');
+    })
   );
 });

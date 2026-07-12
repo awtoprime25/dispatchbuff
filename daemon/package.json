@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@xterm/headless": "^6.0.0",
     "commander": "^12.1.0",
     "node-pty": "^1.0.0",
     "qrcode-terminal": "^0.12.0",

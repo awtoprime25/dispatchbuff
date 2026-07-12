@@ -10,7 +10,9 @@
   <meta name="theme-color" content="#000000">
   <title>DispatchFreeBuff</title>
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap">
   <link rel="stylesheet" href="/styles.css">
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/core.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/javascript.min.js" defer></script>
@@ -23,33 +25,71 @@
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/markdown.min.js" defer></script>
 </head>
 <body class="app">
-  <header class="hdr">
-    <div class="hdr-left">
-      <span id="status-dot" class="dot dot-off" aria-hidden="true"></span>
-      <span class="hdr-title">Dispatch</span>
-      <span class="status-text" id="status-text">offline</span>
+
+  <section id="connect-gate" class="connect-gate hidden">
+    <div class="wordmark">term<span class="cursor">_</span></div>
+    <p class="connect-tagline">Access your PC's terminal from your iPhone, wherever you are.</p>
+    <div class="connect-status">
+      <span id="gate-dot" class="dot dot-off" aria-hidden="true"></span>
+      <span id="gate-status-text">not paired</span>
     </div>
-    <div class="hdr-right">
-      <span id="auth-badge" class="auth-badge hidden" title="End-to-end encryption status">
-        <span aria-hidden="true">🔒</span><span id="auth-text">E2E</span>
-      </span>
-      <button id="menu-btn" class="icon-btn" aria-label="Menu">⋯</button>
-    </div>
-  </header>
+    <button id="gate-pair-btn" type="button" class="primary-btn pill-btn">Pair device</button>
+  </section>
 
-  <main id="messages" class="messages" aria-live="polite"></main>
+  <div id="app-shell" class="app-shell hidden">
+    <header class="hdr">
+      <div class="hdr-left">
+        <span id="status-dot" class="dot dot-off" aria-hidden="true"></span>
+        <span class="hdr-title" id="hdr-title">Dispatch</span>
+        <span class="status-text" id="status-text">offline</span>
+      </div>
+      <div class="hdr-right">
+        <span id="auth-badge" class="auth-badge hidden" title="End-to-end encryption status">
+          <span aria-hidden="true">🔒</span><span id="auth-text">E2E</span>
+        </span>
+      </div>
+    </header>
 
-  <form id="composer" class="composer" autocomplete="off">
-    <textarea id="input" rows="1" placeholder="Ask Freebuff…  (⏎ send · ⇧⏎ newline)" class="input" aria-label="Prompt"></textarea>
-    <button type="submit" id="send" class="send-btn" aria-label="Send" disabled>↑</button>
-  </form>
+    <section id="screen-terminal" class="screen">
+      <main id="messages" class="messages" aria-live="polite"></main>
+      <form id="composer" class="composer" autocomplete="off">
+        <textarea id="input" rows="1" placeholder="Ask Freebuff…  (⏎ send · ⇧⏎ newline)" class="input" aria-label="Prompt"></textarea>
+        <button type="submit" id="send" class="send-btn" aria-label="Send" disabled>↑</button>
+      </form>
+    </section>
 
-  <nav id="menu" class="menu hidden" aria-hidden="true">
-    <button data-act="reconnect"><span class="menu-icon">↻</span> Reconnect <span class="menu-kbd">R</span></button>
-    <button data-act="clear"><span class="menu-icon">⌫</span> Clear chat</button>
-    <button data-act="copy-fp"><span class="menu-icon">⌗</span> Copy fingerprint</button>
-    <button data-act="logout" class="danger"><span class="menu-icon">⎋</span> Unpair device</button>
-  </nav>
+    <section id="screen-commands" class="screen hidden">
+      <div class="screen-header">saved commands</div>
+      <div id="commands-list" class="commands-list"></div>
+    </section>
+
+    <section id="screen-settings" class="screen screen-settings hidden">
+      <div class="settings-card">
+        <div class="settings-card-title">connection</div>
+        <div class="settings-row"><span>host</span><span id="set-host">—</span></div>
+        <div class="settings-row"><span>state</span><span id="set-status">—</span></div>
+        <div class="settings-row"><span>encryption</span><span id="set-enc">—</span></div>
+      </div>
+      <div class="settings-card">
+        <div class="settings-row toggle-row" id="sound-row">
+          <span>sound on send</span>
+          <div id="sound-toggle" class="toggle"><div class="toggle-knob"></div></div>
+        </div>
+      </div>
+      <div class="settings-card">
+        <button type="button" class="settings-action" data-act="reconnect">Reconnect <span class="menu-kbd">R</span></button>
+        <button type="button" class="settings-action" data-act="clear">Clear chat</button>
+        <button type="button" class="settings-action" data-act="copy-fp">Copy fingerprint</button>
+      </div>
+      <button type="button" id="disconnect-btn" class="danger-btn">end session</button>
+    </section>
+
+    <nav class="tabbar">
+      <button type="button" class="tab-btn active" data-tab="terminal">term</button>
+      <button type="button" class="tab-btn" data-tab="commands">cmds</button>
+      <button type="button" class="tab-btn" data-tab="settings">conf</button>
+    </nav>
+  </div>
 
   <script src="/app.js"></script>
 </body>

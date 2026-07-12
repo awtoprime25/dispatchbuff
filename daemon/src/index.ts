@@ -23,6 +23,7 @@ import { Command } from 'commander';
 // exported via `module.exports = { spawn, ... }`. Default-import shape varies
 // across esbuild versions; namespace import always gives us `pty.spawn`.
 import * as pty from 'node-pty';
+import { Terminal as HeadlessTerminal } from '@xterm/headless';
 import WebSocket from 'ws';
 import qrcodeTerminal from 'qrcode-terminal';
 import http from 'node:http';
@@ -38,6 +39,7 @@ import {
   type AnyClientMessage,
   type AnyServerMessage,
   type EncryptedInner,
+  type OutputMode,
 } from '../../shared/protocol';
 
 // TEMP: bypass AES-GCM E2E while we debug the PIN-E2E key-derivation bug.
@@ -148,10 +150,10 @@ class LineBuffer {
 
 // Output buffer for iOS replay on visibility-resume
 class OutputRollbackBuffer {
-  private chunks: { seq: number; content: string; ts: number }[] = [];
+  private chunks: { seq: number; content: string; mode: OutputMode; ts: number }[] = [];
   constructor(private capacity = 200) {}
-  push(seq: number, content: string) {
-    this.chunks.push({ seq, content, ts: Date.now() });
+  push(seq: number, content: string, mode: OutputMode = 'line') {
+    this.chunks.push({ seq, content, mode, ts: Date.now() });
     while (this.chunks.length > this.capacity) this.chunks.shift();
   }
   since(sinceSeq: number) { return this.chunks.filter(c => c.seq > sinceSeq); }
@@ -427,8 +429,29 @@ program.command('start')
   .option('--max-restarts <n>', 'max auto-restart attempts', '3')
   .action(async (opts) => {
     const cfg = requireConfig();
-    const lineBuf = new LineBuffer();
     const outBuf = new OutputRollbackBuffer();
+    const lineBuf = new LineBuffer();
+    // Headless terminal mirrors the pty's screen state so we can tell a
+    // scrolling CLI (normal buffer) apart from a full-screen TUI (alternate
+    // buffer, e.g. Ink-based freebuff UI) and switch output mode accordingly.
+    const screenTerm = new HeadlessTerminal({ cols: cfg.cols, rows: cfg.rows, allowProposedApi: true });
+    let screenFlushTimer: NodeJS.Timeout | null = null;
+    // "freebuff went idle" push trigger: armed on every prompt sent + every
+    // pty chunk received: if IDLE_MS passes with no further output, freebuff
+    // is presumed done and we tell the relay to push-notify (see mobile/sw.js).
+    let idleTimer: NodeJS.Timeout | null = null;
+    let awaitingIdleNotify = false;
+    const IDLE_MS = 2500;
+    function armIdleTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        if (awaitingIdleNotify) {
+          awaitingIdleNotify = false;
+          relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
+        }
+      }, IDLE_MS);
+    }
     let seq = 0;
     let restarts = 0;
     const e2eState = e2e.newE2EState();
@@ -458,7 +481,7 @@ program.command('start')
     /** Convert an output_chunk or system message to the encrypted-inner shape. */
     function toInner(msg: AnyServerMessage): EncryptedInner | null {
       if (msg.type === 'output_chunk') {
-        return { t: 'output_chunk', id: msg.id, sessionId: msg.sessionId, content: msg.content, seq: msg.seq, timestamp: msg.timestamp };
+        return { t: 'output_chunk', id: msg.id, sessionId: msg.sessionId, content: msg.content, seq: msg.seq, timestamp: msg.timestamp, mode: msg.mode };
       }
       if (msg.type === 'system') {
         // We only forward daemon-originated system events through encryption.
@@ -507,13 +530,45 @@ program.command('start')
       }
     }
 
+    /** Render the headless terminal's active screen as plain text (trailing
+     *  blank rows trimmed) — the snapshot sent for mode:'screen' chunks. */
+    function renderScreen(): string {
+      const buf = screenTerm.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < screenTerm.rows; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '');
+      while (lines.length && lines[lines.length - 1] === '') lines.pop();
+      return lines.join('\n');
+    }
+
+    /** Throttle full-screen snapshots (TUIs redraw far faster than a phone
+     *  needs to see) — coalesce bursts into one send per ~33ms. */
+    function scheduleScreenFlush() {
+      if (screenFlushTimer) return;
+      screenFlushTimer = setTimeout(() => {
+        screenFlushTimer = null;
+        const content = renderScreen();
+        seq += 1; outBuf.push(seq, content, 'screen');
+        sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content, seq, timestamp: Date.now(), mode: 'screen' });
+      }, 33);
+    }
+
     function attachTerm(t: ReturnType<typeof pty.spawn>) {
       t.onData((chunk: string) => {
-        const lines = lineBuf.push(chunk);
-        for (const line of lines) {
-          seq += 1; outBuf.push(seq, line);
-          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: line, seq, timestamp: Date.now() });
-        }
+        armIdleTimer(); // any output activity pushes the idle deadline back
+        // Mirror into the headless terminal first so buffer.active.type
+        // reflects this chunk (write() finishes parsing before the callback).
+        screenTerm.write(chunk, () => {
+          if (screenTerm.buffer.active.type === 'alternate') {
+            scheduleScreenFlush();
+            return;
+          }
+          if (screenFlushTimer) { clearTimeout(screenFlushTimer); screenFlushTimer = null; }
+          const lines = lineBuf.push(chunk);
+          for (const line of lines) {
+            seq += 1; outBuf.push(seq, line, 'line');
+            sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: line, seq, timestamp: Date.now(), mode: 'line' });
+          }
+        });
       });
       t.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
         sendContent(<SystemMessage>{ type: 'system', sessionId: cfg.sessionId, event: 'crashed', message: `exit=${exitCode} signal=${signal ?? 0}`, timestamp: Date.now() });
@@ -539,12 +594,13 @@ program.command('start')
     function handleInner(inner: EncryptedInner) {
       if (inner.t === 'prompt') {
         log(`prompt received (${inner.text.length} chars)`);
+        awaitingIdleNotify = true; armIdleTimer(); // fires even if the command produces no output at all
         try { term.write(inner.text); term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
       } else if (inner.t === 'sync_request') {
         const missed = outBuf.since(inner.sinceSeq);
         log(`sync_request sinceSeq=${inner.sinceSeq} → replaying ${missed.length} chunks`);
         for (const c of missed) {
-          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: c.content, seq: c.seq, timestamp: c.ts });
+          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: c.content, seq: c.seq, timestamp: c.ts, mode: c.mode });
         }
       }
     }

@@ -7,15 +7,17 @@
 //   material is useless.
 const AUTH_KEY = 'dispatch_auth';
 const RELAY_KEY = 'dispatch_relay_host';
+const SESSION_KEY = 'dispatch_last_session';
 
 const params = new URL(location.href).searchParams;
-const sessionId = params.get('session') || '';
+const urlSessionId = params.get('session') || '';
 // We accept the code from the URL (e.g. when the user scanned the QR) so
 // they don't have to type it manually. Up to 6 chars, A-Z 0-9 (relay charset).
 const urlCode = (params.get('code') || '').trim().toUpperCase().slice(0, 6);
 const wantScan = params.has('scan');
 
 const $form = document.getElementById('manual');
+const $session = document.getElementById('session');
 const $code = document.getElementById('code');
 const $status = document.getElementById('status');
 const $video = document.getElementById('cam');
@@ -39,8 +41,10 @@ async function genClientPub() {
 
 $form.addEventListener('submit', async e => {
   e.preventDefault();
+  const sessionId = ($session.value || '').trim();
   const code = ($code.value || '').trim().toUpperCase();
   if (!sessionId || !code) { setStatus('Error: missing session or code', 'err'); $code.classList.add('error'); setTimeout(() => $code.classList.remove('error'), 280); return; }
+  localStorage.setItem(SESSION_KEY, sessionId);
   setStatus('Generating encryption keys…');
   const clientPub = await genClientPub();
   setStatus('Pairing…');
@@ -89,13 +93,18 @@ function tick(jsQR) {
   requestAnimationFrame(() => tick(jsQR));
 }
 
+// Session ID: URL param (QR/manual link) wins, else the last one typed here.
+$session.value = urlSessionId || localStorage.getItem(SESSION_KEY) || '';
+
 // Pre-fill the code field from the URL so scanning the QR is one tap, not two.
 if (urlCode && /^[A-Z0-9]{6}$/.test(urlCode)) {
   $code.value = urlCode;
   $code.classList.add('auto-filled');
   setStatus(`Code pre-filled. Tap Pair to confirm.`);
-} else if (sessionId) {
+} else if ($session.value) {
   setStatus('Enter the 6-letter code from your PC terminal.');
+} else {
+  setStatus('Enter the session ID and code from your PC terminal.');
 }
 
 if (wantScan) startCamera();

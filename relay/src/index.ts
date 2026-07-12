@@ -14,6 +14,12 @@ export interface Env {
   RELAY_DO: DurableObjectNamespace;
   ASSETS?: Fetcher; // populated by [assets] binding in wrangler.toml
   ALLOWED_ORIGINS?: string;
+  // Web Push (see /push/* routes + relay-do.ts sendPush). Secrets — set via
+  // `wrangler secret put`, not checked in. Push is silently disabled (no
+  // route 500s, subscribe just no-ops) when these are unset.
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string; // e.g. "mailto:you@example.com"
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -51,8 +57,15 @@ export default {
       return json({ ok: true, name: 'dispatch-relay', version: '2', e2e: true });
     }
 
+    // Public VAPID key — safe to expose, it's the applicationServerKey the
+    // PWA passes to pushManager.subscribe(). Worker-level, not per-session.
+    if (url.pathname === '/push/vapid-public-key' && req.method === 'GET') {
+      if (!env.VAPID_PUBLIC_KEY) return json({ error: 'push not configured' }, 503);
+      return json({ publicKey: env.VAPID_PUBLIC_KEY });
+    }
+
     // Per-session DO routes
-    const doRoutes = ['/pair/code', '/pair/redeem', '/revoke', '/ws'];
+    const doRoutes = ['/pair/code', '/pair/redeem', '/revoke', '/ws', '/push/subscribe'];
     if (doRoutes.includes(url.pathname)) {
       const sessionId = await getSessionId(req, url);
       if (!sessionId) return new Response('sessionId required', { status: 400, headers: CORS_HEADERS });

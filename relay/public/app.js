@@ -41,8 +41,22 @@ const $dot = document.getElementById('status-dot');
 const $status = document.getElementById('status-text');
 const $auth = document.getElementById('auth-badge');
 const $authText = document.getElementById('auth-text');
-const $menu = document.getElementById('menu');
-const $menuBtn = document.getElementById('menu-btn');
+const $connectGate = document.getElementById('connect-gate');
+const $appShell = document.getElementById('app-shell');
+const $gatePairBtn = document.getElementById('gate-pair-btn');
+const $hdrTitle = document.getElementById('hdr-title');
+const $tabBtns = document.querySelectorAll('.tab-btn');
+const $screens = {
+  terminal: document.getElementById('screen-terminal'),
+  commands: document.getElementById('screen-commands'),
+  settings: document.getElementById('screen-settings'),
+};
+const $commandsList = document.getElementById('commands-list');
+const $setHost = document.getElementById('set-host');
+const $setStatus = document.getElementById('set-status');
+const $setEnc = document.getElementById('set-enc');
+const $soundToggle = document.getElementById('sound-toggle');
+const $disconnectBtn = document.getElementById('disconnect-btn');
 
 function auth() { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; } }
 function saveAuth(a) { if (a) localStorage.setItem(AUTH_KEY, JSON.stringify(a)); else localStorage.removeItem(AUTH_KEY); }
@@ -59,6 +73,150 @@ function setAuth(state) {
   if (state === 'on')  { $auth.classList.remove('hidden'); $auth.classList.add('encrypted'); $authText.textContent = 'E2E'; }
   else if (state === 'off') { $auth.classList.remove('hidden'); $auth.classList.remove('encrypted'); $authText.textContent = 'plain'; }
   else { $auth.classList.add('hidden'); }
+}
+
+// ------------------------------------------------------------------
+// Connect gate: unpaired devices see the "term_" landing screen instead
+// of the tabbed app (pairing itself still happens on /pair.html — this
+// just routes them there instead of showing an empty chat).
+function updateGateVisibility() {
+  const paired = !!auth()?.token;
+  $connectGate.classList.toggle('hidden', paired);
+  $appShell.classList.toggle('hidden', !paired);
+}
+$gatePairBtn.addEventListener('click', () => { location.href = '/pair.html'; });
+
+// ------------------------------------------------------------------
+// Tabs: terminal / saved commands / settings.
+let currentTab = 'terminal';
+function setTab(tab) {
+  currentTab = tab;
+  for (const key in $screens) $screens[key].classList.toggle('hidden', key !== tab);
+  $tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $hdrTitle.textContent = tab === 'terminal' ? 'Dispatch' : tab === 'commands' ? 'Commands' : 'Settings';
+  if (tab === 'settings') renderSettings();
+  if (tab === 'terminal') $messages.scrollTop = $messages.scrollHeight;
+}
+$tabBtns.forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+// ------------------------------------------------------------------
+// Saved commands: tap to send instantly. Static list — add an editor UI
+// if this needs to grow beyond a handful of presets.
+const DEFAULT_COMMANDS = [
+  { label: 'Project status', cmd: 'git status' },
+  { label: 'List files', cmd: 'ls -la' },
+  { label: 'Dev server', cmd: 'npm run dev' },
+  { label: 'Docker processes', cmd: 'docker ps' },
+  { label: 'Clear screen', cmd: 'clear' },
+];
+function renderCommands() {
+  $commandsList.innerHTML = '';
+  for (const c of DEFAULT_COMMANDS) {
+    const row = document.createElement('div');
+    row.className = 'cmd-row';
+    const label = document.createElement('span');
+    label.className = 'cmd-label';
+    label.textContent = c.label;
+    const text = document.createElement('span');
+    text.className = 'cmd-text';
+    text.textContent = c.cmd;
+    row.append(label, text);
+    row.addEventListener('click', () => sendPreset(c.cmd));
+    $commandsList.appendChild(row);
+  }
+}
+function sendPreset(cmd) {
+  setTab('terminal');
+  $input.value = cmd;
+  autoResize();
+  $form.requestSubmit();
+}
+
+// ------------------------------------------------------------------
+// Settings tab: connection info + sound toggle + session actions.
+const SOUND_KEY = 'dispatch_sound';
+function soundOn() { return localStorage.getItem(SOUND_KEY) !== 'off'; }
+function setSoundOn(on) { localStorage.setItem(SOUND_KEY, on ? 'on' : 'off'); }
+$soundToggle.addEventListener('click', () => {
+  const next = !soundOn();
+  setSoundOn(next);
+  $soundToggle.classList.toggle('on', next);
+});
+
+let audioCtx = null;
+function playSendSound() {
+  if (!soundOn()) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.12);
+  } catch {}
+}
+
+// ponytail: refreshes on tab open, not live while the tab is open — add a
+// setStatus() hook here if the settings screen needs to track state in real time.
+function renderSettings() {
+  const a = auth();
+  $setHost.textContent = a?.relay ? new URL(a.relay).host : '—';
+  $setStatus.textContent = $status.textContent || '—';
+  $setEnc.textContent = E2E_DISABLED ? 'plain' : (activeSession?.sharedKey ? 'E2E' : 'negotiating…');
+  $soundToggle.classList.toggle('on', soundOn());
+}
+
+document.querySelectorAll('.settings-action').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    if (act === 'reconnect') { if (activeSession) activeSession.reconnectAttempts = 0; connect(); }
+    else if (act === 'clear') { $messages.innerHTML = ''; liveTerminalBubble = null; showEmptyState(); }
+    else if (act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0, 8) || '?')); }
+  });
+});
+$disconnectBtn.addEventListener('click', () => {
+  saveAuth(null);
+  $messages.innerHTML = '';
+  liveTerminalBubble = null;
+  setStatus('offline', 'not paired');
+  setAuth('hidden');
+  updateGateVisibility();
+});
+
+// ------------------------------------------------------------------
+// Push notifications: "freebuff went idle" (see daemon idle-timer + sw.js
+// push handler). iOS Safari only delivers Web Push to a PWA installed via
+// Add to Home Screen (16.4+) — a plain browser tab or the Capacitor-wrapped
+// native shell can't receive it. Fails silently everywhere that's not true.
+function urlBase64ToUint8Array(base64) {
+  const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(padded);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+async function ensurePushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const a = auth();
+  if (!a?.token) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (Notification.permission === 'default') await Notification.requestPermission();
+      if (Notification.permission !== 'granted') return;
+      const keyRes = await fetch(new URL('/push/vapid-public-key', a.relay));
+      if (!keyRes.ok) return; // push not configured on this relay deploy
+      const { publicKey } = await keyRes.json();
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+    }
+    await fetch(new URL('/push/subscribe', a.relay), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: a.sessionId, token: a.token, subscription: sub.toJSON() }),
+    });
+  } catch (e) { console.warn('push subscribe failed', e); }
 }
 
 // ------------------------------------------------------------------
@@ -124,6 +282,7 @@ function connect() {
     if (session.isStale()) return;
     session.reconnectAttempts = 0;
     startPing(session);
+    ensurePushSubscription(); // no-ops silently if unsupported/already subscribed
     if (E2E_DISABLED) {
       session.outSeq = 0; session.inSeq = 0;
       setAuth('off');
@@ -247,7 +406,7 @@ async function decryptAndRender(session, msg) {
     const inner = JSON.parse(decoded);
     if (inner.t === 'output_chunk') {
       setLastSeq(Math.max(lastSeq(), inner.seq || 0));
-      addBubble('received', inner.content || '');
+      renderOutputChunk(inner);
     } else if (inner.t === 'system') {
       if (inner.event === 'crashed') addSystem(`Freebuff crashed · ${inner.message || ''}`, 'bad');
       else if (inner.event === 'restarted') addSystem('Freebuff restarted', 'warn');
@@ -265,11 +424,50 @@ function renderPlainInner(session, msg) {
   session.inSeq = (session.inSeq || 0) + 1;
   if (inner.t === 'output_chunk') {
     setLastSeq(Math.max(lastSeq(), inner.seq || 0));
-    addBubble('received', inner.content || '');
+    renderOutputChunk(inner);
   } else if (inner.t === 'system') {
     if (inner.event === 'crashed') addSystem(`Freebuff crashed · ${inner.message || ''}`, 'bad');
     else if (inner.event === 'restarted') addSystem('Freebuff restarted', 'warn');
   }
+}
+
+// mode:'screen' (full-screen TUI, e.g. Ink-based freebuff UI) replaces the
+// content of one in-place "live terminal" bubble instead of appending a new
+// bubble per redraw. mode:'line' (or missing, legacy) appends as before and
+// closes out the live bubble so the *next* screen snapshot starts a fresh one.
+let liveTerminalBubble = null;
+function renderOutputChunk(inner) {
+  if (inner.mode === 'screen') {
+    if (!liveTerminalBubble) liveTerminalBubble = addLiveTerminalBubble();
+    updateLiveTerminalBubble(liveTerminalBubble, inner.content || '');
+  } else {
+    liveTerminalBubble = null;
+    addBubble('received', inner.content || '');
+  }
+}
+
+function addLiveTerminalBubble() {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-in msg-live-terminal';
+  const col = document.createElement('div');
+  col.className = 'msg-col';
+  const term = document.createElement('div');
+  term.className = 'live-term';
+  term.innerHTML = '<div class="live-term-head"><span class="live-term-dot"></span>live terminal</div>';
+  const pre = document.createElement('pre');
+  pre.className = 'live-term-pre';
+  term.appendChild(pre);
+  col.appendChild(term);
+  wrap.appendChild(col);
+  $messages.appendChild(wrap);
+  $messages.scrollTop = $messages.scrollHeight;
+  return wrap;
+}
+
+function updateLiveTerminalBubble(wrap, content) {
+  const pre = wrap.querySelector('.live-term-pre');
+  if (pre) pre.textContent = content;
+  $messages.scrollTop = $messages.scrollHeight;
 }
 
 function startPing(session) {
@@ -299,15 +497,28 @@ function addSystem(text, kind) {
   $messages.scrollTop = $messages.scrollHeight;
 }
 
-function addBubble(role, text) {
+function formatTime(ts) {
+  const d = new Date(ts || Date.now());
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function addBubble(role, text, ts) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (role === 'sent' ? 'msg-out' : 'msg-in');
+  const col = document.createElement('div');
+  col.className = 'msg-col';
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.appendChild(renderMarkdownish(text || ''));
-  wrap.appendChild(bubble);
+  col.appendChild(bubble);
+  const time = document.createElement('span');
+  time.className = 'bubble-time';
+  time.textContent = formatTime(ts);
+  col.appendChild(time);
+  wrap.appendChild(col);
   $messages.appendChild(wrap);
   $messages.scrollTop = $messages.scrollHeight;
+  if (role === 'sent') playSendSound();
   return wrap;
 }
 
@@ -501,25 +712,12 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pageshow', () => { if (!activeSession || !activeSession.ws || activeSession.ws.readyState > 1) connect(); });
 
-// Menu
-$menuBtn.addEventListener('click', e => { e.stopPropagation(); $menu.classList.toggle('hidden'); });
-document.addEventListener('click', e => { if (!$menu.classList.contains('hidden') && !e.target.closest('#menu')) $menu.classList.add('hidden'); });
-$menu.addEventListener('click', e => {
-  const t = e.target.closest('button[data-act]');
-  if (!t) return;
-  $menu.classList.add('hidden');
-  if (t.dataset.act === 'reconnect') { if (activeSession) activeSession.reconnectAttempts = 0; connect(); }
-  else if (t.dataset.act === 'clear') { $messages.innerHTML = ''; showEmptyState(); }
-  else if (t.dataset.act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0,8) || '?')); }
-  else if (t.dataset.act === 'logout') { saveAuth(null); $messages.innerHTML = ''; setStatus('offline', 'not paired'); setAuth('hidden'); }
-});
-
 // Keyboard shortcut: R to reconnect
 document.addEventListener('keydown', e => {
-  if (e.key === 'r' && !e.target.matches('input, textarea') && !e.metaKey && !e.ctrlKey) {
-    $menu.classList.add('hidden'); connect();
-  }
+  if (e.key === 'r' && !e.target.matches('input, textarea') && !e.metaKey && !e.ctrlKey) connect();
 });
 
+updateGateVisibility();
+renderCommands();
 showEmptyState();
 connect();

@@ -174,17 +174,50 @@ document.querySelectorAll('.settings-action').forEach(btn => {
   btn.addEventListener('click', () => {
     const act = btn.dataset.act;
     if (act === 'reconnect') { if (activeSession) activeSession.reconnectAttempts = 0; connect(); }
-    else if (act === 'clear') { $messages.innerHTML = ''; showEmptyState(); }
+    else if (act === 'clear') { $messages.innerHTML = ''; liveTerminalBubble = null; showEmptyState(); }
     else if (act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0, 8) || '?')); }
   });
 });
 $disconnectBtn.addEventListener('click', () => {
   saveAuth(null);
   $messages.innerHTML = '';
+  liveTerminalBubble = null;
   setStatus('offline', 'not paired');
   setAuth('hidden');
   updateGateVisibility();
 });
+
+// ------------------------------------------------------------------
+// Push notifications: "freebuff went idle" (see daemon idle-timer + sw.js
+// push handler). iOS Safari only delivers Web Push to a PWA installed via
+// Add to Home Screen (16.4+) — a plain browser tab or the Capacitor-wrapped
+// native shell can't receive it. Fails silently everywhere that's not true.
+function urlBase64ToUint8Array(base64) {
+  const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(padded);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+async function ensurePushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const a = auth();
+  if (!a?.token) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (Notification.permission === 'default') await Notification.requestPermission();
+      if (Notification.permission !== 'granted') return;
+      const keyRes = await fetch(new URL('/push/vapid-public-key', a.relay));
+      if (!keyRes.ok) return; // push not configured on this relay deploy
+      const { publicKey } = await keyRes.json();
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+    }
+    await fetch(new URL('/push/subscribe', a.relay), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: a.sessionId, token: a.token, subscription: sub.toJSON() }),
+    });
+  } catch (e) { console.warn('push subscribe failed', e); }
+}
 
 // ------------------------------------------------------------------
 // Session model: every connect() spawns a fresh "session" with its own
@@ -249,6 +282,7 @@ function connect() {
     if (session.isStale()) return;
     session.reconnectAttempts = 0;
     startPing(session);
+    ensurePushSubscription(); // no-ops silently if unsupported/already subscribed
     if (E2E_DISABLED) {
       session.outSeq = 0; session.inSeq = 0;
       setAuth('off');
@@ -372,7 +406,7 @@ async function decryptAndRender(session, msg) {
     const inner = JSON.parse(decoded);
     if (inner.t === 'output_chunk') {
       setLastSeq(Math.max(lastSeq(), inner.seq || 0));
-      addBubble('received', inner.content || '');
+      renderOutputChunk(inner);
     } else if (inner.t === 'system') {
       if (inner.event === 'crashed') addSystem(`Freebuff crashed · ${inner.message || ''}`, 'bad');
       else if (inner.event === 'restarted') addSystem('Freebuff restarted', 'warn');
@@ -390,11 +424,50 @@ function renderPlainInner(session, msg) {
   session.inSeq = (session.inSeq || 0) + 1;
   if (inner.t === 'output_chunk') {
     setLastSeq(Math.max(lastSeq(), inner.seq || 0));
-    addBubble('received', inner.content || '');
+    renderOutputChunk(inner);
   } else if (inner.t === 'system') {
     if (inner.event === 'crashed') addSystem(`Freebuff crashed · ${inner.message || ''}`, 'bad');
     else if (inner.event === 'restarted') addSystem('Freebuff restarted', 'warn');
   }
+}
+
+// mode:'screen' (full-screen TUI, e.g. Ink-based freebuff UI) replaces the
+// content of one in-place "live terminal" bubble instead of appending a new
+// bubble per redraw. mode:'line' (or missing, legacy) appends as before and
+// closes out the live bubble so the *next* screen snapshot starts a fresh one.
+let liveTerminalBubble = null;
+function renderOutputChunk(inner) {
+  if (inner.mode === 'screen') {
+    if (!liveTerminalBubble) liveTerminalBubble = addLiveTerminalBubble();
+    updateLiveTerminalBubble(liveTerminalBubble, inner.content || '');
+  } else {
+    liveTerminalBubble = null;
+    addBubble('received', inner.content || '');
+  }
+}
+
+function addLiveTerminalBubble() {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-in msg-live-terminal';
+  const col = document.createElement('div');
+  col.className = 'msg-col';
+  const term = document.createElement('div');
+  term.className = 'live-term';
+  term.innerHTML = '<div class="live-term-head"><span class="live-term-dot"></span>live terminal</div>';
+  const pre = document.createElement('pre');
+  pre.className = 'live-term-pre';
+  term.appendChild(pre);
+  col.appendChild(term);
+  wrap.appendChild(col);
+  $messages.appendChild(wrap);
+  $messages.scrollTop = $messages.scrollHeight;
+  return wrap;
+}
+
+function updateLiveTerminalBubble(wrap, content) {
+  const pre = wrap.querySelector('.live-term-pre');
+  if (pre) pre.textContent = content;
+  $messages.scrollTop = $messages.scrollHeight;
 }
 
 function startPing(session) {
