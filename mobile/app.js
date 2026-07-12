@@ -55,6 +55,10 @@ const $commandsList = document.getElementById('commands-list');
 const $setHost = document.getElementById('set-host');
 const $setStatus = document.getElementById('set-status');
 const $setEnc = document.getElementById('set-enc');
+const $setStandalone = document.getElementById('set-standalone');
+const $setPushApi = document.getElementById('set-push-api');
+const $setPushPerm = document.getElementById('set-push-perm');
+const $setPushSub = document.getElementById('set-push-sub');
 const $soundToggle = document.getElementById('sound-toggle');
 const $disconnectBtn = document.getElementById('disconnect-btn');
 
@@ -269,6 +273,25 @@ function renderSettings() {
   $setStatus.textContent = $status.textContent || '—';
   $setEnc.textContent = E2E_DISABLED ? 'plain' : (activeSession?.sharedKey ? 'E2E' : 'negotiating…');
   $soundToggle.classList.toggle('on', soundOn());
+
+  // iOS only exposes the Push API to a PWA opened from its home-screen
+  // icon (standalone display mode) -- a Safari tab or Chrome (separate
+  // engine, no Web Push at all on iOS) silently has no PushManager, which
+  // used to fail with no visible signal at all. Surface it directly.
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  $setStandalone.textContent = standalone ? 'yes' : 'no — open from the home screen icon';
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
+  $setPushApi.textContent = pushSupported ? 'supported' : 'unsupported';
+  $setPushPerm.textContent = ('Notification' in window) ? Notification.permission : 'n/a';
+  if (pushSupported) {
+    $setPushSub.textContent = 'checking…';
+    navigator.serviceWorker.ready
+      .then(reg => reg.pushManager.getSubscription())
+      .then(sub => { $setPushSub.textContent = sub ? 'yes' : 'no'; })
+      .catch(() => { $setPushSub.textContent = 'error'; });
+  } else {
+    $setPushSub.textContent = 'n/a';
+  }
 }
 
 document.querySelectorAll('.settings-action').forEach(btn => {
@@ -277,6 +300,12 @@ document.querySelectorAll('.settings-action').forEach(btn => {
     if (act === 'reconnect') { if (activeSession) activeSession.reconnectAttempts = 0; connect(); }
     else if (act === 'clear') { clearChat(); }
     else if (act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0, 8) || '?')); }
+    else if (act === 'enable-push') {
+      ensurePushSubscription().then(result => {
+        addSystem('push: ' + result, result === 'subscribed' ? 'ok' : 'warn');
+        renderSettings();
+      });
+    }
   });
 });
 $disconnectBtn.addEventListener('click', () => {
@@ -298,18 +327,22 @@ function urlBase64ToUint8Array(base64) {
   const raw = atob(padded);
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
+// Returns a short status string (also used by the "Enable push
+// notifications" settings button + diagnostic panel) instead of failing
+// silently -- the old silent-return-on-any-guard made "why didn't my
+// notification arrive" impossible to diagnose from the phone itself.
 async function ensurePushSubscription() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported in this browser context';
   const a = auth();
-  if (!a?.token) return;
+  if (!a?.token) return 'not paired';
   try {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
       if (Notification.permission === 'default') await Notification.requestPermission();
-      if (Notification.permission !== 'granted') return;
+      if (Notification.permission !== 'granted') return 'permission ' + Notification.permission;
       const keyRes = await fetch(new URL('/push/vapid-public-key', a.relay));
-      if (!keyRes.ok) return; // push not configured on this relay deploy
+      if (!keyRes.ok) return 'relay has no VAPID key configured'; // push not configured on this relay deploy
       const { publicKey } = await keyRes.json();
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
     }
@@ -317,7 +350,8 @@ async function ensurePushSubscription() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: a.sessionId, token: a.token, subscription: sub.toJSON() }),
     });
-  } catch (e) { console.warn('push subscribe failed', e); }
+    return 'subscribed';
+  } catch (e) { console.warn('push subscribe failed', e); return 'error: ' + (e?.message || e); }
 }
 
 // ------------------------------------------------------------------
