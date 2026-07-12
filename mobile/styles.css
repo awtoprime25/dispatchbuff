@@ -128,20 +128,9 @@ body.app {
   font-size: 11px; line-height: 1.35;
   color: var(--text);
   white-space: pre;
-  overflow: auto;
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-
-/* The live-updating snapshot (last child = the active one, see
-   addLiveTerminalBubble) stretches to fill the messages area instead of
-   shrink-wrapping to content height -- otherwise short freebuff screens
-   leave a dead gap between the bubble and the composer below it. Older,
-   no-longer-updating snapshots (e.g. before a /cd restart) keep their
-   natural content height. */
-.messages > .msg-live-terminal:last-child { flex: 1; min-height: 0; display: flex; }
-.messages > .msg-live-terminal:last-child .msg-col { flex: 1; min-height: 0; }
-.messages > .msg-live-terminal:last-child .live-term { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.messages > .msg-live-terminal:last-child .live-term-pre { flex: 1; min-height: 0; }
 
 /* System messages (no bubble, just a subtle pill) */
 .system-msg { justify-content: center; }
