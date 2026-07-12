@@ -127,9 +127,16 @@ body.app {
   font-family: var(--font-mono);
   font-size: 11px; line-height: 1.35;
   color: var(--text);
+  /* pre (not pre-wrap): freebuff's box-drawing/table output depends on
+     exact column positions, which wrapping would mangle. No horizontal
+     overflow-scroll here on purpose either -- cols=50 already keeps
+     lines within the phone's width, and iOS tends to capture a vertical
+     swipe that starts on a nested scroll container for itself even when
+     only the horizontal axis overflows, which stole the swipe meant for
+     .messages' own vertical scroll below. The rare over-width line just
+     gets clipped by .live-term's overflow:hidden instead of scrolling;
+     only .messages scrolls now. */
   white-space: pre;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 /* System messages (no bubble, just a subtle pill) */
