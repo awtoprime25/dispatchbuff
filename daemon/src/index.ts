@@ -462,6 +462,7 @@ program.command('start')
         if (pendingPrompts.length > 0) { writePrompt(pendingPrompts.shift()!); return; }
         if (awaitingIdleNotify) {
           awaitingIdleNotify = false;
+          sendExtractedAnswer();
           relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
         }
       }, IDLE_MS);
@@ -469,7 +470,18 @@ program.command('start')
     function writePrompt(text: string) {
       awaitingIdleNotify = true;
       armIdleTimer();
-      try { term.write(text); term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
+      // freebuff's Ink input box silently drops an Enter sent in the same
+      // tick as the preceding text — confirmed by repro: text+\r written
+      // back-to-back left the prompt sitting unsubmitted in the input box
+      // indefinitely, while the exact same write with a ~150ms gap before \r
+      // submitted reliably every time. Root cause is upstream (Ink/freebuff),
+      // not something we can fix here — just avoid triggering it.
+      try {
+        term.write(text);
+        setTimeout(() => {
+          try { term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
+        }, 150);
+      } catch (e) { log(`write failed: ${(e as Error).message}`); }
     }
     let seq = 0;
     let restarts = 0;
@@ -557,6 +569,69 @@ program.command('start')
       for (let i = 0; i < screenTerm.rows; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '');
       while (lines.length && lines[lines.length - 1] === '') lines.pop();
       return lines.join('\n');
+    }
+
+    /**
+     * Best-effort scrape of freebuff's most recent answer out of its TUI
+     * history so the phone can show a clean chat bubble instead of only the
+     * live screen mirror. freebuff renders each turn as a repeating block:
+     *   [HH:MM]
+     *   <echoed prompt> ⎘
+     *   (• or ▸) Thinking [...thinking text...]
+     *   <answer text>
+     *   Suggested followups: / ⎘ • Ns • △▽   (footer)
+     * Heuristic, coupled to that layout — freebuff has no structured/plain
+     * output mode to hook into instead (checked: no CLI flag, and it still
+     * forces the alternate-screen TUI even when stdin/stdout aren't a TTY).
+     * Returns null (falls back to screen-mode-only) if the shape doesn't match.
+     */
+    function extractLastAnswer(screenText: string): string | null {
+      const lines = screenText.split('\n');
+      let start = -1;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (/^\s*\[\d{1,2}:\d{2}\]\s*$/.test(lines[i])) { start = i; break; }
+      }
+      if (start === -1) return null;
+
+      const body: string[] = [];
+      for (let i = start + 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (/⎘\s*•\s*\d+s/.test(line)) break; // per-turn footer
+        if (/^\s*\[\d{1,2}:\d{2}\]\s*$/.test(line)) break; // next turn already started
+        if (/Enter a coding task/.test(line)) break; // input box
+        body.push(line);
+      }
+
+      let idx = 0;
+      while (idx < body.length && body[idx].trim() === '') idx++;
+      if (idx < body.length) idx++; // skip the echoed prompt line
+      while (idx < body.length && body[idx].trim() === '') idx++;
+      if (idx < body.length && /^\s*[•▸]\s*Thinking/.test(body[idx])) {
+        idx++;
+        while (idx < body.length && body[idx].trim() !== '') idx++; // skip thinking paragraph
+      }
+      while (idx < body.length && body[idx].trim() === '') idx++;
+
+      const answerLines: string[] = [];
+      for (; idx < body.length; idx++) {
+        if (/^\s*Suggested followups:/.test(body[idx])) break;
+        if (/^\s*[╭╰]/.test(body[idx])) break; // boxed UI elements (ads, warnings) aren't part of the answer
+        answerLines.push(body[idx].trimEnd());
+      }
+      const answer = answerLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      return answer || null;
+    }
+
+    /** Fires once freebuff goes idle after a TUI turn — sends the scraped
+     *  answer (see extractLastAnswer) as a normal chat bubble alongside the
+     *  live screen mirror. No-ops if freebuff isn't in the alternate screen
+     *  (nothing to scrape — normal-mode output is already line-mode bubbles). */
+    function sendExtractedAnswer() {
+      if (screenTerm.buffer.active.type !== 'alternate') return;
+      const answer = extractLastAnswer(renderScreen());
+      if (!answer) return;
+      seq += 1; outBuf.push(seq, answer, 'line');
+      sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: answer, seq, timestamp: Date.now(), mode: 'line' });
     }
 
     /** Throttle full-screen snapshots (TUIs redraw far faster than a phone
