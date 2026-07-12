@@ -706,7 +706,6 @@ $form.addEventListener('submit', async e => {
     const inner = { t: 'prompt', id: newId(), sessionId: a.sessionId, text, timestamp: Date.now() };
     try {
       session.ws.send(JSON.stringify({ v: PROTO_V, type: 'plain', ...inner }));
-      addBubble('sent', text);
       session.lastSent = text;
       $input.value = ''; autoResize(); $input.focus();
     } catch (err) { addSystem('send failed', 'bad'); }
@@ -726,7 +725,6 @@ $form.addEventListener('submit', async e => {
   if (session.isStale()) return;
   try {
     session.ws.send(JSON.stringify(wire));
-    addBubble('sent', text);
     session.lastSent = text;
     $input.value = ''; autoResize(); $input.focus();
   } catch (err) { addSystem('send failed', 'bad'); }
@@ -798,7 +796,7 @@ async function flushPendingPrompts(session) {
       return;
     }
     session.pendingPrompts.shift(); // safe to drop only now — wire is real
-    try { session.ws.send(JSON.stringify(wire)); addBubble('sent', text); } catch {}
+    try { session.ws.send(JSON.stringify(wire)); } catch {}
   }
   if (session.pendingPrompts.length === 0 && session.sharedKey && !session.isStale()) addSystem('🔓 channel ready', 'ok');
 }
