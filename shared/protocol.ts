@@ -62,9 +62,17 @@ export interface EncryptedEnvelope {
   /** base64 of ciphertext + 16-byte auth tag, in that order. */
   ct: string;
 }
+/**
+ * Raw navigation keys — for arrow-key/Enter-driven menus a full-screen TUI
+ * shows (freebuff has no way to answer those from typed text). Sent as a
+ * literal escape sequence straight into the pty; see daemon/src/index.ts.
+ */
+export type ControlKey = 'up' | 'down' | 'left' | 'right' | 'enter' | 'escape';
+
 /** Inner payload of an `enc` envelope. JSON-stringified then encrypted. */
 export type EncryptedInner =
   | { t: 'prompt'; id: MessageId; sessionId: SessionId; text: string; timestamp: number }
+  | { t: 'key'; sessionId: SessionId; key: ControlKey; timestamp: number }
   | { t: 'output_chunk'; id: MessageId; sessionId: SessionId; content: string; seq: number; timestamp: number; mode?: OutputMode }
   | { t: 'system'; sessionId: SessionId; event: 'crashed' | 'restarted'; message?: string; timestamp: number }
   | { t: 'sync_request'; sessionId: SessionId; sinceSeq: number; timestamp: number };

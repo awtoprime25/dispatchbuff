@@ -40,6 +40,7 @@ import {
   type AnyServerMessage,
   type EncryptedInner,
   type OutputMode,
+  type ControlKey,
 } from '../../shared/protocol';
 
 // TEMP: bypass AES-GCM E2E while we debug the PIN-E2E key-derivation bug.
@@ -125,6 +126,13 @@ function relayWsUrl(c: Config) {
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
   return u.toString().replace(/\/+$/, '') + '/ws';
 }
+
+// Raw key sequences for menu/list navigation (see ControlKey in shared/protocol) —
+// standard xterm CSI arrow codes; freebuff runs with TERM=xterm-256color.
+const KEY_SEQUENCES: Record<ControlKey, string> = {
+  up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
+  enter: '\r', escape: '\x1b',
+};
 
 // ---------------------------------------------------------------------------
 // ANSI stripper + line buffer
@@ -699,6 +707,14 @@ program.command('start')
         } else {
           writePrompt(inner.text);
         }
+      } else if (inner.t === 'key') {
+        // Navigation keys (arrow-key menus, y/n prompts) bypass the prompt
+        // queue entirely — they're not a new "turn", just steering the one
+        // already in flight, and go straight to the pty with no delay (the
+        // text+\r submit race that needs the 150ms gap doesn't apply here).
+        log(`key received: ${inner.key}`);
+        awaitingIdleNotify = true; armIdleTimer(); // keep the live screen mirror on while navigating
+        try { term.write(KEY_SEQUENCES[inner.key]); } catch (e) { log(`write failed: ${(e as Error).message}`); }
       } else if (inner.t === 'sync_request') {
         const missed = outBuf.since(inner.sinceSeq);
         log(`sync_request sinceSeq=${inner.sinceSeq} → replaying ${missed.length} chunks`);

@@ -34,6 +34,7 @@ const HKDF_SALT = new Uint8Array(32); // zero salt; info disambiguates use
 const E2E_DISABLED = true;
 
 const $messages = document.getElementById('messages');
+const $keyControls = document.getElementById('key-controls');
 const $input = document.getElementById('input');
 const $form = document.getElementById('composer');
 const $send = document.getElementById('send');
@@ -107,7 +108,10 @@ const DEFAULT_COMMANDS = [
   { label: 'List files', cmd: 'ls -la' },
   { label: 'Dev server', cmd: 'npm run dev' },
   { label: 'Docker processes', cmd: 'docker ps' },
-  { label: 'Clear screen', cmd: 'clear' },
+  // Clears *this chat view*, not freebuff — "clear" sent as a prompt just
+  // confuses it (freebuff's an agent, not a shell; it has no clear-screen
+  // concept, and asks "what should I clear?" back).
+  { label: 'Clear chat', local: 'clear' },
 ];
 function renderCommands() {
   $commandsList.innerHTML = '';
@@ -119,9 +123,9 @@ function renderCommands() {
     label.textContent = c.label;
     const text = document.createElement('span');
     text.className = 'cmd-text';
-    text.textContent = c.cmd;
+    text.textContent = c.local ? '(local)' : c.cmd;
     row.append(label, text);
-    row.addEventListener('click', () => sendPreset(c.cmd));
+    row.addEventListener('click', () => c.local ? clearChat() : sendPreset(c.cmd));
     $commandsList.appendChild(row);
   }
 }
@@ -130,6 +134,12 @@ function sendPreset(cmd) {
   $input.value = cmd;
   autoResize();
   $form.requestSubmit();
+}
+function clearChat() {
+  setTab('terminal');
+  $messages.innerHTML = '';
+  setLiveTerminalBubble(null);
+  showEmptyState();
 }
 
 // ------------------------------------------------------------------
@@ -174,14 +184,14 @@ document.querySelectorAll('.settings-action').forEach(btn => {
   btn.addEventListener('click', () => {
     const act = btn.dataset.act;
     if (act === 'reconnect') { if (activeSession) activeSession.reconnectAttempts = 0; connect(); }
-    else if (act === 'clear') { $messages.innerHTML = ''; liveTerminalBubble = null; showEmptyState(); }
+    else if (act === 'clear') { clearChat(); }
     else if (act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0, 8) || '?')); }
   });
 });
 $disconnectBtn.addEventListener('click', () => {
   saveAuth(null);
   $messages.innerHTML = '';
-  liveTerminalBubble = null;
+  setLiveTerminalBubble(null);
   setStatus('offline', 'not paired');
   setAuth('hidden');
   updateGateVisibility();
@@ -436,12 +446,16 @@ function renderPlainInner(session, msg) {
 // bubble per redraw. mode:'line' (or missing, legacy) appends as before and
 // closes out the live bubble so the *next* screen snapshot starts a fresh one.
 let liveTerminalBubble = null;
+function setLiveTerminalBubble(bubble) {
+  liveTerminalBubble = bubble;
+  $keyControls.classList.toggle('hidden', !bubble);
+}
 function renderOutputChunk(inner) {
   if (inner.mode === 'screen') {
-    if (!liveTerminalBubble) liveTerminalBubble = addLiveTerminalBubble();
+    if (!liveTerminalBubble) setLiveTerminalBubble(addLiveTerminalBubble());
     updateLiveTerminalBubble(liveTerminalBubble, inner.content || '');
   } else {
-    liveTerminalBubble = null;
+    setLiveTerminalBubble(null);
     addBubble('received', inner.content || '');
   }
 }
@@ -648,6 +662,26 @@ $form.addEventListener('submit', async e => {
     session.lastSent = text;
     $input.value = ''; autoResize(); $input.focus();
   } catch (err) { addSystem('send failed', 'bad'); }
+});
+
+// Arrow-key/Enter/Esc controls — shown while a live terminal bubble is up,
+// for menus freebuff shows that typed text can't answer (see key-controls).
+async function sendKey(key) {
+  const session = currentSessionOrNull();
+  if (!session || !session.ws || session.ws.readyState !== 1) return;
+  const a = auth();
+  const inner = { t: 'key', sessionId: a.sessionId, key, timestamp: Date.now() };
+  if (E2E_DISABLED) {
+    try { session.ws.send(JSON.stringify({ v: PROTO_V, type: 'plain', ...inner })); } catch {}
+    return;
+  }
+  if (!session.sharedKey) return;
+  const wire = await encryptEnvelope(session, inner);
+  if (session.isStale()) return;
+  try { session.ws.send(JSON.stringify(wire)); } catch {}
+}
+document.querySelectorAll('.key-btn').forEach(btn => {
+  btn.addEventListener('click', () => sendKey(btn.dataset.key));
 });
 
 async function encryptEnvelope(session, inner) {

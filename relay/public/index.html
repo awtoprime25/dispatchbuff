@@ -52,6 +52,14 @@
 
     <section id="screen-terminal" class="screen">
       <main id="messages" class="messages" aria-live="polite"></main>
+      <div id="key-controls" class="key-controls hidden">
+        <button type="button" class="key-btn" data-key="up" aria-label="Up">↑</button>
+        <button type="button" class="key-btn" data-key="down" aria-label="Down">↓</button>
+        <button type="button" class="key-btn" data-key="left" aria-label="Left">←</button>
+        <button type="button" class="key-btn" data-key="right" aria-label="Right">→</button>
+        <button type="button" class="key-btn key-btn-wide" data-key="escape" aria-label="Escape">Esc</button>
+        <button type="button" class="key-btn key-btn-wide key-btn-accent" data-key="enter" aria-label="Enter">Enter</button>
+      </div>
       <form id="composer" class="composer" autocomplete="off">
         <textarea id="input" rows="1" placeholder="Ask Freebuff…  (⏎ send · ⇧⏎ newline)" class="input" aria-label="Prompt"></textarea>
         <button type="submit" id="send" class="send-btn" aria-label="Send" disabled>↑</button>

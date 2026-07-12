@@ -206,6 +206,33 @@ body.app {
   border: 1px solid var(--hairline);
 }
 
+/* --------------------------- Key controls ----------------------------
+   Shown only while a live terminal (mode:'screen') bubble is on screen —
+   freebuff sometimes drops into an arrow-key/Enter menu (e.g. "what should
+   I clear?") that typed text can't answer. Buttons send raw key sequences
+   straight into the pty (see shared/protocol.ts ControlKey). */
+.key-controls {
+  display: flex; gap: 6px; justify-content: center;
+  padding: 8px 12px 0;
+  flex-shrink: 0;
+}
+.key-controls.hidden { display: none; }
+.key-btn {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 40px; min-height: 40px;
+  font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t), transform var(--t), border-color var(--t);
+}
+.key-btn:hover { border-color: var(--accent-strong); }
+.key-btn:active { transform: scale(0.92); background: var(--bg-elevated); }
+.key-btn-wide { flex: 1; max-width: 90px; font-size: 12.5px; letter-spacing: 0.03em; text-transform: uppercase; }
+.key-btn-accent { background: var(--accent-faded); border-color: oklch(50% 0.1 152 / 0.4); color: var(--text); }
+.key-btn-accent:active { background: var(--accent-strong); }
+
 /* ------------------------------ Composer ----------------------------- */
 .composer {
   display: flex; gap: 8px; align-items: flex-end;
