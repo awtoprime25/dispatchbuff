@@ -116,11 +116,14 @@ $session.addEventListener('input', tryAutoFillFromPastedLink);
 // Session ID: URL param (QR/manual link) wins, else the last one typed here.
 $session.value = urlSessionId || localStorage.getItem(SESSION_KEY) || '';
 
-// Pre-fill the code field from the URL so scanning the QR is one tap, not two.
-if (urlCode && /^[A-Z0-9]{6}$/.test(urlCode)) {
+// Scanning the QR landed here with session+code in the URL already — same
+// deal as pasting the whole link (tryAutoFillFromPastedLink above): don't
+// make them tap Pair too, just go.
+if (urlSessionId && urlCode && /^[A-Z0-9]{6}$/.test(urlCode)) {
   $code.value = urlCode;
   $code.classList.add('auto-filled');
-  setStatus(`Code pre-filled. Tap Pair to confirm.`);
+  setStatus('Code pre-filled — pairing…');
+  $form.requestSubmit();
 } else if ($session.value) {
   setStatus('Enter the 6-letter code from your PC terminal.');
 } else {
