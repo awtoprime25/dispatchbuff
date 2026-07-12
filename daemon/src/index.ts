@@ -64,6 +64,11 @@ interface Config {
   cols: number;
   rows: number;
   createdAt: number;
+  /** Working directory freebuff is spawned in. Changeable at runtime via
+   *  the `/cd <path>` prompt (see handleInner) — persists here so it's still
+   *  in effect on the next `dispatch start`. Falls back to process.cwd() for
+   *  sessions from before this field existed. */
+  cwd?: string;
 }
 
 function loadConfig(): Config | null {
@@ -535,7 +540,7 @@ program.command('start')
         name: 'xterm-256color',
         cols: cfg.cols,
         rows: cfg.rows,
-        cwd: process.cwd(),
+        cwd: cfg.cwd || process.cwd(),
         env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', COLORTERM: 'truecolor' },
       });
     }
@@ -731,9 +736,38 @@ program.command('start')
       });
     }
 
+    /** freebuff has no in-session "switch project" command — its working
+     *  directory is fixed at process spawn. `/cd <path>` is intercepted here
+     *  (never reaches freebuff) and restarts the pty pointed at the new
+     *  directory instead, the same way the crash-watchdog restart does.
+     *  Persists to config.json so it's still in effect on the next
+     *  `dispatch start`, from the PC or triggered again from the phone. */
+    function changeDirectory(rawPath: string) {
+      const path = rawPath.trim().replace(/^["']|["']$/g, '');
+      function replyLine(text: string) {
+        seq += 1; outBuf.push(seq, text, 'line');
+        sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: text, seq, timestamp: Date.now(), mode: 'line' });
+      }
+      let stat;
+      try { stat = fs.statSync(path); } catch { replyLine(`❌ Directory not found: ${path}`); return; }
+      if (!stat.isDirectory()) { replyLine(`❌ Not a directory: ${path}`); return; }
+      cfg.cwd = path;
+      saveConfig(cfg);
+      log(`switching working directory to ${path}`);
+      try { term.kill(); } catch {}
+      pendingPrompts.length = 0;
+      awaitingIdleNotify = false;
+      screenTerm.reset();
+      term = makeTerm();
+      attachTerm(term);
+      replyLine(`📁 Working directory: ${path}`);
+    }
+
     /** Handle a decrypted inner payload from the client. */
     function handleInner(inner: EncryptedInner) {
       if (inner.t === 'prompt') {
+        const cdMatch = inner.text.trim().match(/^\/cd\s+(.+)$/i);
+        if (cdMatch) { changeDirectory(cdMatch[1]); return; }
         log(`prompt received (${inner.text.length} chars)`);
         if (awaitingIdleNotify) {
           pendingPrompts.push(inner.text);
