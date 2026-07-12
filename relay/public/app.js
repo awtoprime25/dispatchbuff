@@ -98,7 +98,7 @@ function setTab(tab) {
   $tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $hdrTitle.textContent = tab === 'terminal' ? 'Dispatch' : tab === 'commands' ? 'Commands' : 'Settings';
   if (tab === 'settings') renderSettings();
-  if (tab === 'terminal') $messages.scrollTop = $messages.scrollHeight;
+  if (tab === 'terminal') { stickToBottom = true; $messages.scrollTop = $messages.scrollHeight; }
 }
 $tabBtns.forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
@@ -601,7 +601,6 @@ function renderOutputChunk(inner) {
 
 function addLiveTerminalBubble() {
   clearEmptyState();
-  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-in msg-live-terminal';
   const col = document.createElement('div');
@@ -615,15 +614,14 @@ function addLiveTerminalBubble() {
   col.appendChild(term);
   wrap.appendChild(col);
   $messages.appendChild(wrap);
-  if (stick) $messages.scrollTop = $messages.scrollHeight;
+  if (stickToBottom) $messages.scrollTop = $messages.scrollHeight;
   return wrap;
 }
 
 function updateLiveTerminalBubble(wrap, content) {
-  const stick = isNearMessagesBottom();
   const pre = wrap.querySelector('.live-term-pre');
   if (pre) pre.textContent = content;
-  if (stick) $messages.scrollTop = $messages.scrollHeight;
+  if (stickToBottom) $messages.scrollTop = $messages.scrollHeight;
 }
 
 function startPing(session) {
@@ -643,17 +641,31 @@ function scheduleReconnect(session) {
 function newId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 // The live terminal redraws several times a second while freebuff is
-// streaming — force-scrolling to bottom on every redraw made it impossible
-// to read back through the buffer (any manual scroll got yanked back down
-// within a few hundred ms). Only auto-scroll if the user was already at
-// (or near) the bottom before the content changed, same as any chat app.
+// streaming. First attempt: only auto-scroll if scrollTop was already near
+// the bottom *at redraw time*. That still fought the user -- the first ~80px
+// of any upward flick off the bottom is, for its first instant, still
+// "near bottom" by that measure, and iOS's momentum-scroll deceleration
+// keeps scrollTop legitimately moving through that zone for a beat after
+// the finger lifts. A redraw landing in that window snapped straight back
+// to bottom, killing the gesture before it went anywhere.
+// Fix: track intent, not a proximity snapshot. Any real touch/wheel on the
+// pane turns sticking off immediately, before the browser's own scroll
+// physics even start, and it only turns back on once the gesture (including
+// the momentum tail) has fully settled -- debounced off the 'scroll' event.
+let stickToBottom = true;
+let scrollSettleTimer = null;
 function isNearMessagesBottom() {
   return $messages.scrollHeight - $messages.scrollTop - $messages.clientHeight < 80;
 }
+$messages.addEventListener('touchstart', () => { stickToBottom = false; }, { passive: true });
+$messages.addEventListener('wheel', () => { stickToBottom = false; }, { passive: true });
+$messages.addEventListener('scroll', () => {
+  clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = setTimeout(() => { stickToBottom = isNearMessagesBottom(); }, 200);
+});
 
 function addSystem(text, kind) {
   clearEmptyState();
-  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg system-msg';
   const pill = document.createElement('span');
@@ -661,7 +673,7 @@ function addSystem(text, kind) {
   pill.textContent = text;
   wrap.appendChild(pill);
   $messages.appendChild(wrap);
-  if (stick) $messages.scrollTop = $messages.scrollHeight;
+  if (stickToBottom) $messages.scrollTop = $messages.scrollHeight;
 }
 
 function formatTime(ts) {
@@ -671,7 +683,6 @@ function formatTime(ts) {
 
 function addBubble(role, text, ts) {
   clearEmptyState();
-  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (role === 'sent' ? 'msg-out' : 'msg-in');
   const col = document.createElement('div');
@@ -686,7 +697,7 @@ function addBubble(role, text, ts) {
   col.appendChild(time);
   wrap.appendChild(col);
   $messages.appendChild(wrap);
-  if (stick) $messages.scrollTop = $messages.scrollHeight;
+  if (stickToBottom) $messages.scrollTop = $messages.scrollHeight;
   if (role === 'sent') playSendSound();
   return wrap;
 }
