@@ -686,6 +686,10 @@ program.command('start')
 
     function attachTerm(t: ReturnType<typeof pty.spawn>) {
       t.onData((chunk: string) => {
+        // Mirror to this console too — this pty IS freebuff; opening a
+        // second one on the PC just collides with it ("already running").
+        // Watch/drive the same session from here instead of a separate window.
+        process.stdout.write(chunk);
         armIdleTimer(); // any output activity pushes the idle deadline back
         // Mirror into the headless terminal first so buffer.active.type
         // reflects this chunk (write() finishes parsing before the callback).
