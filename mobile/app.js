@@ -302,7 +302,7 @@ document.querySelectorAll('.settings-action').forEach(btn => {
     else if (act === 'copy-fp') { navigator.clipboard.writeText(location.host + ' · ' + (auth()?.sessionId?.slice(0, 8) || '?')); }
     else if (act === 'enable-push') {
       ensurePushSubscription().then(result => {
-        addSystem('push: ' + result, result === 'subscribed' ? 'ok' : 'warn');
+        alert('push: ' + result); // addSystem alone lands in the (hidden, on Settings tab) terminal list — invisible feedback read as "nothing happened"
         renderSettings();
       });
     }
@@ -595,6 +595,7 @@ function renderOutputChunk(inner) {
 
 function addLiveTerminalBubble() {
   clearEmptyState();
+  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-in msg-live-terminal';
   const col = document.createElement('div');
@@ -608,14 +609,15 @@ function addLiveTerminalBubble() {
   col.appendChild(term);
   wrap.appendChild(col);
   $messages.appendChild(wrap);
-  $messages.scrollTop = $messages.scrollHeight;
+  if (stick) $messages.scrollTop = $messages.scrollHeight;
   return wrap;
 }
 
 function updateLiveTerminalBubble(wrap, content) {
+  const stick = isNearMessagesBottom();
   const pre = wrap.querySelector('.live-term-pre');
   if (pre) pre.textContent = content;
-  $messages.scrollTop = $messages.scrollHeight;
+  if (stick) $messages.scrollTop = $messages.scrollHeight;
 }
 
 function startPing(session) {
@@ -634,8 +636,18 @@ function scheduleReconnect(session) {
 
 function newId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
+// The live terminal redraws several times a second while freebuff is
+// streaming — force-scrolling to bottom on every redraw made it impossible
+// to read back through the buffer (any manual scroll got yanked back down
+// within a few hundred ms). Only auto-scroll if the user was already at
+// (or near) the bottom before the content changed, same as any chat app.
+function isNearMessagesBottom() {
+  return $messages.scrollHeight - $messages.scrollTop - $messages.clientHeight < 80;
+}
+
 function addSystem(text, kind) {
   clearEmptyState();
+  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg system-msg';
   const pill = document.createElement('span');
@@ -643,7 +655,7 @@ function addSystem(text, kind) {
   pill.textContent = text;
   wrap.appendChild(pill);
   $messages.appendChild(wrap);
-  $messages.scrollTop = $messages.scrollHeight;
+  if (stick) $messages.scrollTop = $messages.scrollHeight;
 }
 
 function formatTime(ts) {
@@ -653,6 +665,7 @@ function formatTime(ts) {
 
 function addBubble(role, text, ts) {
   clearEmptyState();
+  const stick = isNearMessagesBottom();
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (role === 'sent' ? 'msg-out' : 'msg-in');
   const col = document.createElement('div');
@@ -667,7 +680,7 @@ function addBubble(role, text, ts) {
   col.appendChild(time);
   wrap.appendChild(col);
   $messages.appendChild(wrap);
-  $messages.scrollTop = $messages.scrollHeight;
+  if (stick) $messages.scrollTop = $messages.scrollHeight;
   if (role === 'sent') playSendSound();
   return wrap;
 }
