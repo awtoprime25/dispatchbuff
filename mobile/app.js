@@ -111,8 +111,53 @@ const DEFAULT_COMMANDS = [
   // concept, and asks "what should I clear?" back).
   { label: 'Clear chat', local: 'clear' },
 ];
+
+// Skills installed under ~/.agents/skills (same .agents root freebuff reads
+// for its MCP config). Tapping one only fills the composer with a nudge
+// naming the skill — unlike DEFAULT_COMMANDS these aren't a complete prompt,
+// freebuff still needs the actual task typed after. Static/hand-curated from
+// the SKILL.md frontmatter on disk — re-sync by hand if skills are added or
+// removed (no filesystem access from the phone to read it live).
+const SKILLS = [
+  { name: 'frontend-design', label: 'Frontend design', desc: 'Polished UI build/redesign' },
+  { name: 'codebase-inspection', label: 'Codebase inspection', desc: 'Survey shape & structure' },
+  { name: 'security', label: 'Security review', desc: 'Find vulnerabilities' },
+  { name: 'database-security', label: 'Database security', desc: 'Review schema/queries' },
+  { name: 'production-readiness-review', label: 'Production readiness', desc: 'Pre-deploy checklist' },
+  { name: 'webapp-testing', label: 'Webapp testing', desc: 'E2E test via Playwright' },
+  { name: 'architecture-diagram', label: 'Architecture diagram', desc: 'System/flow diagram' },
+  { name: 'spike', label: 'Spike / prototype', desc: 'Throwaway experiment' },
+  { name: 'mcp-builder', label: 'Build an MCP server', desc: 'Design + implement MCP' },
+  { name: 'github-pr-workflow', label: 'GitHub PR workflow', desc: 'Branch → PR → merge' },
+  { name: 'github-code-review', label: 'Review a PR', desc: 'Comment on an open PR' },
+  { name: 'github-issues', label: 'GitHub issues', desc: 'Create/triage issues' },
+  { name: 'github-repo-management', label: 'Repo management', desc: 'Clone/fork/release' },
+  { name: 'github-auth', label: 'GitHub auth', desc: 'Fix gh CLI login' },
+  { name: 'firebase-firestore', label: 'Firebase / Firestore', desc: 'Deploy rules, query data' },
+  { name: 'image-optimization', label: 'Image optimization', desc: 'Compress/convert images' },
+  { name: 'ocr-and-documents', label: 'OCR documents', desc: 'Extract text from scans/PDFs' },
+  { name: 'vision-analyze', label: 'Analyze an image', desc: 'Describe/extract from a photo' },
+  { name: 'maps', label: 'Maps / geocoding', desc: 'Addresses, routes, POIs' },
+  { name: 'arxiv', label: 'arXiv search', desc: 'Find research papers' },
+  { name: 'blogwatcher', label: 'Blog watcher', desc: 'Monitor RSS/blogs' },
+  { name: 'graphify', label: 'Knowledge graph', desc: 'Map entities & relations' },
+  { name: 'llm-wiki', label: 'Wiki notes', desc: 'Local linked knowledge base' },
+  { name: 'humanizer', label: 'Humanize text', desc: 'Strip AI-isms from writing' },
+  { name: 'powerpoint', label: 'PowerPoint deck', desc: 'Create/edit .pptx' },
+  { name: 'ascii-video', label: 'ASCII video', desc: 'Video → ASCII art' },
+  { name: 'polymarket', label: 'Polymarket odds', desc: 'Prediction market prices' },
+  { name: 'godmode', label: 'Red-team an LLM', desc: 'Authorized adversarial test' },
+];
+
+function addSectionHeader(text) {
+  const h = document.createElement('div');
+  h.className = 'cmd-section-header';
+  h.textContent = text;
+  $commandsList.appendChild(h);
+}
 function renderCommands() {
   $commandsList.innerHTML = '';
+  addSectionHeader('quick commands');
   for (const c of DEFAULT_COMMANDS) {
     const row = document.createElement('div');
     row.className = 'cmd-row';
@@ -126,12 +171,35 @@ function renderCommands() {
     row.addEventListener('click', () => c.local ? clearChat() : sendPreset(c.cmd));
     $commandsList.appendChild(row);
   }
+  addSectionHeader('skills');
+  for (const s of SKILLS) {
+    const row = document.createElement('div');
+    row.className = 'cmd-row';
+    const label = document.createElement('span');
+    label.className = 'cmd-label';
+    label.textContent = s.label;
+    const text = document.createElement('span');
+    text.className = 'cmd-text cmd-text-trunc';
+    text.textContent = s.desc;
+    row.append(label, text);
+    row.addEventListener('click', () => fillPrompt(`Use the ${s.name} skill: `));
+    $commandsList.appendChild(row);
+  }
 }
 function sendPreset(cmd) {
   setTab('terminal');
   $input.value = cmd;
   autoResize();
   $form.requestSubmit();
+}
+// Skills need a task typed after the nudge, so this only fills the composer
+// (cursor at the end) and focuses it — unlike sendPreset, nothing is sent.
+function fillPrompt(text) {
+  setTab('terminal');
+  $input.value = text;
+  autoResize();
+  $input.focus();
+  $input.setSelectionRange(text.length, text.length);
 }
 function clearChat() {
   setTab('terminal');

@@ -128,9 +128,20 @@ body.app {
   font-size: 11px; line-height: 1.35;
   color: var(--text);
   white-space: pre;
-  overflow-x: auto;
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* The live-updating snapshot (last child = the active one, see
+   addLiveTerminalBubble) stretches to fill the messages area instead of
+   shrink-wrapping to content height -- otherwise short freebuff screens
+   leave a dead gap between the bubble and the composer below it. Older,
+   no-longer-updating snapshots (e.g. before a /cd restart) keep their
+   natural content height. */
+.messages > .msg-live-terminal:last-child { flex: 1; min-height: 0; display: flex; }
+.messages > .msg-live-terminal:last-child .msg-col { flex: 1; min-height: 0; }
+.messages > .msg-live-terminal:last-child .live-term { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.messages > .msg-live-terminal:last-child .live-term-pre { flex: 1; min-height: 0; }
 
 /* System messages (no bubble, just a subtle pill) */
 .system-msg { justify-content: center; }
@@ -288,15 +299,22 @@ body.app {
   letter-spacing: 0.06em; color: var(--text-faded);
 }
 .commands-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.cmd-section-header {
+  padding: 16px 20px 8px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-faded);
+}
 .cmd-row {
   padding: 13px 20px; min-height: 44px;
   display: flex; justify-content: space-between; align-items: center;
+  gap: 12px;
   border-bottom: 1px solid var(--hairline); cursor: pointer;
   transition: background var(--t);
 }
 .cmd-row:active { background: rgba(255,255,255,0.04); }
-.cmd-label { color: var(--text); font-size: 13.5px; }
+.cmd-label { color: var(--text); font-size: 13.5px; flex-shrink: 0; }
 .cmd-text { color: var(--text-faded); font-size: 12px; font-family: var(--font-mono); }
+.cmd-text-trunc { max-width: 52%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 
 /* ------------------------------- Settings ------------------------------ */
 .screen-settings { overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 20px; }
