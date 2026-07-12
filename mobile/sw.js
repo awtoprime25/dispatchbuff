@@ -1,5 +1,5 @@
 // mobile/sw.js — offline shell + cached CDN deps + push notifications.
-const CACHE = 'dispatch-v10';
+const CACHE = 'dispatch-v11';
 const SHELL = [
   '/', '/index.html', '/pair.html',
   '/styles.css', '/app.js', '/pair.js',
@@ -45,8 +45,14 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+  // Network-first for our own shell files: a cache-first strategy here meant
+  // every app.js/styles.css fix shipped via `wrangler deploy` sat invisible
+  // behind the old cached copy until the CACHE version string was bumped by
+  // hand -- happened more than once. Still falls back to cache when offline.
   e.respondWith(
-    caches.open(CACHE).then(c => c.match(e.request).then(r => r ?? fetch(e.request).catch(() => c.match('/'))))
+    fetch(e.request)
+      .then(res => { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return res; })
+      .catch(() => caches.open(CACHE).then(c => c.match(e.request).then(r => r ?? c.match('/'))))
   );
 });
 
