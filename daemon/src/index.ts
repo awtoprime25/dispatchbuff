@@ -258,7 +258,11 @@ program.command('init')
   .description('Create a new Dispatch session (registers daemon token with relay)')
   .requiredOption('-r, --relay <url>', 'relay URL (e.g. https://dispatch-relay.X.workers.dev)')
   .option('-c, --command <cmd>', 'CLI to spawn', process.env.FREEBUFF_BIN ?? 'freebuff')
-  .option('--cols <n>', 'terminal cols', '200')
+  // 200-col default made every mode:'screen' TUI snapshot too wide for a
+  // phone (horizontal scroll to read anything) — 50 fits an iPhone SE-width
+  // screen at the live-terminal bubble's 11px font without scrolling sideways.
+  // Bump this back up with --cols if you're mainly watching from a PC terminal.
+  .option('--cols <n>', 'terminal cols', '50')
   .option('--rows <n>', 'terminal rows', '50')
   .action(async (opts) => {
     const sessionId = newId();
@@ -454,8 +458,22 @@ program.command('start')
     const screenTerm = new HeadlessTerminal({ cols: cfg.cols, rows: cfg.rows, allowProposedApi: true });
     let screenFlushTimer: NodeJS.Timeout | null = null;
     // "freebuff went idle" push trigger: armed on every prompt sent + every
-    // pty chunk received: if IDLE_MS passes with no further output, freebuff
-    // is presumed done and we tell the relay to push-notify (see mobile/sw.js).
+    // pty chunk received. Originally a pure output-silence timer (fire after
+    // IDLE_MS with no new pty data) but freebuff's pty never actually goes
+    // silent — something in its idle screen (cursor blink, ad rotation, who
+    // knows) keeps emitting redraws indefinitely, so a silence-based timer
+    // never completed its countdown and simply never fired (confirmed: 300+
+    // consecutive re-arms with zero fires in a real session). Now it's a
+    // settle-debounce that, once nothing's arrived for IDLE_MS, checks
+    // freebuff's own UI state directly: it shows a "■ Esc" hint (cancel a
+    // running turn) any time it's actively thinking/working, and only that —
+    // NOT the input-box placeholder, which reappears briefly right after
+    // Enter, before "Thinking" has even rendered, and read as "already done"
+    // far too early (confirmed: idle fired ~400ms after submit, well before
+    // freebuff could plausibly have answered). Absence of "■ Esc" is a
+    // direct signal from freebuff's own UI, not an inferred timing guess.
+    // If it's still busy we just keep polling every IDLE_MS instead of
+    // giving up, so it's self-correcting regardless of how noisy the pty is.
     // Doubles as the busy/idle gate for pendingPrompts below — freebuff's TUI
     // expects one prompt at a time (typed + Enter, wait for the reply) and
     // silently drops/garbles prompts sent while it's still mid-response, so
@@ -464,33 +482,43 @@ program.command('start')
     let idleTimer: NodeJS.Timeout | null = null;
     let awaitingIdleNotify = false;
     const pendingPrompts: string[] = [];
-    const IDLE_MS = 2500;
+    const IDLE_MS = 400;
     function armIdleTimer() {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         idleTimer = null;
         if (pendingPrompts.length > 0) { writePrompt(pendingPrompts.shift()!); return; }
-        if (awaitingIdleNotify) {
-          awaitingIdleNotify = false;
-          sendExtractedAnswer();
-          relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
-        }
+        if (!awaitingIdleNotify) return;
+        if (/■\s*Esc/.test(renderScreen())) { armIdleTimer(); return; } // still busy — keep polling
+        awaitingIdleNotify = false;
+        sendExtractedAnswer();
+        relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
       }, IDLE_MS);
     }
     function writePrompt(text: string) {
       awaitingIdleNotify = true;
-      armIdleTimer();
       // freebuff's Ink input box silently drops an Enter sent in the same
       // tick as the preceding text — confirmed by repro: text+\r written
       // back-to-back left the prompt sitting unsubmitted in the input box
-      // indefinitely, while the exact same write with a ~150ms gap before \r
-      // submitted reliably every time. Root cause is upstream (Ink/freebuff),
+      // indefinitely. 150ms was enough headroom at 200 cols but NOT at the
+      // narrower 50-col default (3/3 repro failures) — Ink's re-render cost
+      // apparently scales with layout, so 500ms is used for both instead of
+      // making this width-dependent. Root cause is upstream (Ink/freebuff),
       // not something we can fix here — just avoid triggering it.
+      //
+      // armIdleTimer() is NOT called until after \r is actually sent — arming
+      // it immediately raced the readiness check in armIdleTimer() against
+      // this same delay: the check could fire at IDLE_MS while the screen was
+      // still showing its pre-prompt "ready" state (Enter not sent yet),
+      // reading that as "already idle" and never re-mirroring the real
+      // conversation. onData's own re-arms cover the steady state once real
+      // output starts flowing; this only guards the window before that.
       try {
         term.write(text);
         setTimeout(() => {
           try { term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
-        }, 150);
+          armIdleTimer();
+        }, 500);
       } catch (e) { log(`write failed: ${(e as Error).message}`); }
     }
     let seq = 0;
