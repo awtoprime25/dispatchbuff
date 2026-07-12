@@ -496,7 +496,6 @@ program.command('start')
         if (!awaitingIdleNotify) return;
         if (/■\s*Esc/.test(renderScreen())) { armIdleTimer(); return; } // still busy — keep polling
         awaitingIdleNotify = false;
-        sendExtractedAnswer();
         relay.sendRaw({ v: 2, type: 'notify', event: 'idle' });
       }, IDLE_MS);
     }
@@ -614,69 +613,6 @@ program.command('start')
       return lines.join('\n');
     }
 
-    /**
-     * Best-effort scrape of freebuff's most recent answer out of its TUI
-     * history so the phone can show a clean chat bubble instead of only the
-     * live screen mirror. freebuff renders each turn as a repeating block:
-     *   [HH:MM]
-     *   <echoed prompt> ⎘
-     *   (• or ▸) Thinking [...thinking text...]
-     *   <answer text>
-     *   Suggested followups: / ⎘ • Ns • △▽   (footer)
-     * Heuristic, coupled to that layout — freebuff has no structured/plain
-     * output mode to hook into instead (checked: no CLI flag, and it still
-     * forces the alternate-screen TUI even when stdin/stdout aren't a TTY).
-     * Returns null (falls back to screen-mode-only) if the shape doesn't match.
-     */
-    function extractLastAnswer(screenText: string): string | null {
-      const lines = screenText.split('\n');
-      let start = -1;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        if (/^\s*\[\d{1,2}:\d{2}\]\s*$/.test(lines[i])) { start = i; break; }
-      }
-      if (start === -1) return null;
-
-      const body: string[] = [];
-      for (let i = start + 1; i < lines.length; i++) {
-        const line = lines[i];
-        if (/⎘\s*•\s*\d+s/.test(line)) break; // per-turn footer
-        if (/^\s*\[\d{1,2}:\d{2}\]\s*$/.test(line)) break; // next turn already started
-        if (/Enter a coding task/.test(line)) break; // input box
-        body.push(line);
-      }
-
-      let idx = 0;
-      while (idx < body.length && body[idx].trim() === '') idx++;
-      if (idx < body.length) idx++; // skip the echoed prompt line
-      while (idx < body.length && body[idx].trim() === '') idx++;
-      if (idx < body.length && /^\s*[•▸]\s*Thinking/.test(body[idx])) {
-        idx++;
-        while (idx < body.length && body[idx].trim() !== '') idx++; // skip thinking paragraph
-      }
-      while (idx < body.length && body[idx].trim() === '') idx++;
-
-      const answerLines: string[] = [];
-      for (; idx < body.length; idx++) {
-        if (/^\s*Suggested followups:/.test(body[idx])) break;
-        if (/^\s*[╭╰]/.test(body[idx])) break; // boxed UI elements (ads, warnings) aren't part of the answer
-        answerLines.push(body[idx].trimEnd());
-      }
-      const answer = answerLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-      return answer || null;
-    }
-
-    /** Fires once freebuff goes idle after a TUI turn — sends the scraped
-     *  answer (see extractLastAnswer) as a normal chat bubble alongside the
-     *  live screen mirror. No-ops if freebuff isn't in the alternate screen
-     *  (nothing to scrape — normal-mode output is already line-mode bubbles). */
-    function sendExtractedAnswer() {
-      if (screenTerm.buffer.active.type !== 'alternate') return;
-      const answer = extractLastAnswer(renderScreen());
-      if (!answer) return;
-      seq += 1; outBuf.push(seq, answer, 'line');
-      sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: answer, seq, timestamp: Date.now(), mode: 'line' });
-    }
-
     /** Throttle full-screen snapshots (TUIs redraw far faster than a phone
      *  needs to see) — coalesce bursts into one send per ~33ms. */
     function scheduleScreenFlush() {
@@ -766,7 +702,7 @@ program.command('start')
     /** Handle a decrypted inner payload from the client. */
     function handleInner(inner: EncryptedInner) {
       if (inner.t === 'prompt') {
-        const cdMatch = inner.text.trim().match(/^\/cd\s+(.+)$/i);
+        const cdMatch = inner.text.trim().match(/^\/?cd\s+(.+)$/i);
         if (cdMatch) { changeDirectory(cdMatch[1]); return; }
         log(`prompt received (${inner.text.length} chars)`);
         if (awaitingIdleNotify) {
