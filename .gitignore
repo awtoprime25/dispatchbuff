@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+
+# iOS shell — CI generates ios/ fresh each build (npx cap add ios)
+ios-app/ios/
+ios-app/www/node_modules/
+*.ipa
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local config
+.env
+.env.local
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+freebuff.daemon.log
+
+# Scratch / debug output
+tmp-smoke/

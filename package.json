@@ -1,0 +1,13 @@
+{
+  "name": "dispatch-freebuff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Send prompts from your phone to your PC terminal running Freebuff.",
+  "scripts": {
+    "typecheck:daemon": "cd daemon && npm run typecheck",
+    "typecheck:relay": "cd relay && npm run typecheck",
+    "build:daemon": "cd daemon && npm run build",
+    "deploy:relay": "cd relay && npm run deploy"
+  },
+  "workspaces": ["daemon", "relay"]
+}

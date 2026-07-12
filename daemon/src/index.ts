@@ -1,0 +1,695 @@
+// daemon/src/index.ts
+// PC daemon: spawns Freebuff in a node-pty, strips ANSI, line-batches output,
+// sends chunks to the relay as encrypted OutputChunks; receives encrypted
+// Prompts from the relay and writes them into the pty.
+//
+// Protocol v2 (see shared/protocol.ts):
+//   - First WS message from client is plaintext `key_exchange` (clientPub).
+//   - Daemon derives shared AES-256-GCM key and replies with plaintext `key_ack`.
+//   - From then on, all content is wrapped in `enc` envelopes (AES-256-GCM,
+//     12-byte nonce, AAD = "v2|<role>|<seq>"). Ping/pong stay plaintext.
+//   - Daemon regenerates its keypair on every `start`; phone re-exchanges on
+//     every reconnect. AAD + seq give replay protection + ciphertext binding.
+//
+// CLI subcommands:
+//   init       — create a session + tokens (saved to ~/.dispatch/config.json)
+//   pair       — print a 6-char code + QR + local scan page (binds 127.0.0.1)
+//   start      — main daemon loop with reconnect + crash watchdog
+//   status     — show config + ping the relay
+//   ask <text> — run a one-shot prompt locally without the relay (debug aid)
+//   revoke     — rotate sessionId + tokens, forcing re-pair
+import { Command } from 'commander';
+// `import * as pty` is CJS-interop safe: node-pty is an externalized CJS module
+// exported via `module.exports = { spawn, ... }`. Default-import shape varies
+// across esbuild versions; namespace import always gives us `pty.spawn`.
+import * as pty from 'node-pty';
+import WebSocket from 'ws';
+import qrcodeTerminal from 'qrcode-terminal';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import * as e2e from './crypto';
+import {
+  PROTOCOL_VERSION,
+  type Role,
+  type SystemMessage,
+  type AnyClientMessage,
+  type AnyServerMessage,
+  type EncryptedInner,
+} from '../../shared/protocol';
+
+// TEMP: bypass AES-GCM E2E while we debug the PIN-E2E key-derivation bug.
+// When true, the daemon sends and accepts `{v:2, type:'plain', ...inner}`
+// envelopes instead of encrypted `enc` envelopes — same shape, no AES-GCM.
+// Flip to false to restore end-to-end encryption.
+const E2E_DISABLED = true;
+
+const RELAY_DEFAULT = process.env.DISPATCH_RELAY ?? 'https://dispatch-relay.example.workers.dev';
+const PORT_PAIR_DEFAULT = 13737;
+const DIR = path.join(os.homedir(), '.dispatch');
+const FILE = path.join(DIR, 'config.json');
+
+interface Config {
+  version: 1;
+  sessionId: string;
+  daemonToken: string;
+  relay: string;
+  command: string;
+  args: string[];
+  cols: number;
+  rows: number;
+  createdAt: number;
+}
+
+function loadConfig(): Config | null {
+  try { const raw = fs.readFileSync(FILE, 'utf8'); return JSON.parse(raw) as Config; } catch { return null; }
+}
+function saveConfig(c: Config) {
+  fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(FILE, JSON.stringify(c, null, 2), { mode: 0o600 });
+}
+function requireConfig(): Config {
+  const c = loadConfig();
+  if (!c) { console.error('Not initialized. Run `dispatch init` first.'); process.exit(1); }
+  return c;
+}
+function newId() { return crypto.randomBytes(8).toString('hex'); }
+function newToken() { return crypto.randomBytes(32).toString('hex'); }
+/**
+ * Mint a registration code for a phone from the relay. The code is stored in
+ * DO storage with a 5-min TTL — the phone must call /pair/redeem with it
+ * before expiry. Returning a locally-fabricated code (the old behaviour)
+ * produced "invalid or expired" errors because the relay never saw it.
+ */
+async function mintClientCode(relay: string, sessionId: string): Promise<{ code: string; expiresAt: number }> {
+  const resp = await fetch(`${relay}/pair/code`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  });
+  if (!resp.ok) throw new Error(`/pair/code returned HTTP ${resp.status}`);
+  return await resp.json() as { code: string; expiresAt: number };
+}
+/**
+ * Mint a real daemon authentication token from the relay's pair flow.
+ * The locally-generated tokens we used before were never registered with the
+ * relay, so every WS upgrade returned 403. This helper calls /pair/code +
+ * /pair/redeem (with role:'daemon') so the token is actually usable.
+ */
+async function mintDaemonToken(relay: string, sessionId: string): Promise<string> {
+  // We need a (server-side) code to redeem; calling /pair/code first is the
+  // canonical pair-flow path on this relay. Throws on HTTP failure.
+  const { code } = await mintClientCode(relay, sessionId);
+  const redeemResp = await fetch(`${relay}/pair/redeem`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, code, role: 'daemon', v: 2 }),
+  });
+  if (!redeemResp.ok) {
+    const errBody = await redeemResp.text().catch(() => '');
+    throw new Error(`/pair/redeem returned HTTP ${redeemResp.status}: ${errBody.slice(0, 200)}`);
+  }
+  const { token } = await redeemResp.json() as { token: string };
+  return token;
+}
+function newCode() {
+  const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(6);
+  let s = ''; for (let i = 0; i < 6; i++) s += charset[bytes[i] % charset.length];
+  return s;
+}
+function relayWsUrl(c: Config) { return c.relay.replace(/^http/, 'ws') + '/ws'; }
+
+// ---------------------------------------------------------------------------
+// ANSI stripper + line buffer
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b[\(\)][A-Za-z0-9]/g, '')
+    .replace(/\x1b[=>]/g, '');
+}
+class LineBuffer {
+  private current = '';
+  private pending: string[] = [];
+  push(chunk: string): string[] {
+    const clean = stripAnsi(chunk);
+    for (const ch of clean) {
+      if (ch === '\n') {
+        if (this.current.length > 0) { this.pending.push(this.current); this.current = ''; }
+        else this.pending.push('');
+      } else if (ch === '\r') { this.current = ''; }
+      else if (ch !== '\x07' && ch !== '\x0b' && ch !== '\x08') this.current += ch;
+    }
+    if (this.pending.length === 0) return [];
+    const out = this.pending; this.pending = []; return out;
+  }
+}
+
+// Output buffer for iOS replay on visibility-resume
+class OutputRollbackBuffer {
+  private chunks: { seq: number; content: string; ts: number }[] = [];
+  constructor(private capacity = 200) {}
+  push(seq: number, content: string) {
+    this.chunks.push({ seq, content, ts: Date.now() });
+    while (this.chunks.length > this.capacity) this.chunks.shift();
+  }
+  since(sinceSeq: number) { return this.chunks.filter(c => c.seq > sinceSeq); }
+  latestSeq() { return this.chunks.length ? this.chunks[this.chunks.length - 1].seq : 0; }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket client wrapper used by start (uses the `ws` package — works on Node 20+)
+class RelaySocket {
+  private ws?: WebSocket;
+  /** Set true once we've *intentionally* stopped (auth failure). The user's
+   *  close handler should treat this as a terminal state, not a network blip. */
+  public dying = false;
+  private alive = true;
+  private attempts = 0;
+  private heartbeat?: NodeJS.Timeout;
+  private msgHandler: (raw: string) => void = () => {};
+  private closeHandler: () => void = () => {};
+  private openHandler: () => void = () => {};
+  constructor(private url: string, private opts: { sessionId: string; token: string; role: Role }) { this.connect(); }
+  private connect() {
+    if (!this.alive) return;
+    const u = new URL(this.url);
+    u.searchParams.set('sessionId', this.opts.sessionId);
+    u.searchParams.set('token', this.opts.token);
+    u.searchParams.set('role', this.opts.role);
+    u.searchParams.set('v', PROTOCOL_VERSION);
+    this.ws = new WebSocket(u.toString());
+    this.ws.on('open', () => {
+      this.attempts = 0;
+      this.startHeartbeat();
+      this.openHandler();
+    });
+    this.ws.on('message', d => { try { this.msgHandler(d.toString()); } catch {} });
+    this.ws.on('close', (code, reason) => {
+      const reasonStr = reason && Buffer.isBuffer(reason) ? reason.toString('utf8') : (typeof reason === 'string' ? reason : '');
+      console.error(`[daemon] relay WS closed (code=${code}${reasonStr ? `, reason=${reasonStr}` : ''})`);
+      this.stopHeartbeat(); this.closeHandler();
+      if (this.alive) {
+        const delay = Math.min(30_000, 500 * Math.pow(2, ++this.attempts));
+        setTimeout(() => this.connect(), delay);
+      }
+    });
+    this.ws.on('error', () => {});
+    // WS upgrade rejected by relay (HTTP 4xx/5xx): don't loop forever — stop
+    // and tell the user how to recover.
+    (this.ws as any).on?.('unexpected-response', (_req: any, res: any) => {
+      this.dying = true;
+      this.alive = false;
+      this.stopHeartbeat();
+      console.error(`[daemon] relay rejected the connection: HTTP ${res.statusCode} ${res.statusMessage ?? ''}`.trim());
+      console.error('  This usually means the daemon token is invalid or the relay evicted our session.');
+      console.error('  Fix: `dispatch revoke` → `rm ~/.dispatch/config.json` → `dispatch init` → `dispatch pair` → `dispatch start`');
+      this.closeHandler();
+      try { res.resume(); } catch {}
+      // Exit so the user sees the error and the freebuff child is cleaned up.
+      setTimeout(() => process.exit(1), 300);
+    });
+  }
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(
+      () => this.sendRaw({ v: 2, type: 'ping', ts: Date.now() }),
+      25_000,
+    );
+  }
+  private stopHeartbeat() { if (this.heartbeat) clearInterval(this.heartbeat); this.heartbeat = undefined; }
+  onOpen(h: () => void) { this.openHandler = h; }
+  onMessage(h: (raw: string) => void) { this.msgHandler = h; }
+  onClose(h: () => void) { this.closeHandler = h; }
+  /** Send a wire-level message. No encryption layer here. */
+  sendRaw(msg: unknown) {
+    try { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg)); } catch {}
+  }
+  close() {
+    this.alive = false;
+    this.stopHeartbeat();
+    try { this.ws?.close(); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+const program = new Command();
+program.name('dispatch')
+  .description('DispatchFreeBuff — relay your Freebuff terminal to your phone')
+  .version(PROTOCOL_VERSION);
+
+program.command('init')
+  .description('Create a new Dispatch session (registers daemon token with relay)')
+  .requiredOption('-r, --relay <url>', 'relay URL (e.g. https://dispatch-relay.X.workers.dev)')
+  .option('-c, --command <cmd>', 'CLI to spawn', process.env.FREEBUFF_BIN ?? 'freebuff')
+  .option('--cols <n>', 'terminal cols', '200')
+  .option('--rows <n>', 'terminal rows', '50')
+  .action(async (opts) => {
+    const sessionId = newId();
+    const relay = opts.relay.replace(/\/+$/, '');
+    console.log('Registering daemon token with relay...');
+    let daemonToken: string;
+    try {
+      daemonToken = await mintDaemonToken(relay, sessionId);
+      console.log('  \u2713 Daemon token registered (256-bit, relay-minted).');
+    } catch (err) {
+      console.error('\n[init failed] Could not register with relay:', (err as Error).message);
+      console.error('  Check your internet connection and that the relay URL is reachable.');
+      process.exit(1);
+    }
+
+    const cfg: Config = {
+      version: 1,
+      sessionId,
+      daemonToken,
+      relay: opts.relay,
+      command: opts.command,
+      args: [],
+      cols: parseInt(opts.cols, 10),
+      rows: parseInt(opts.rows, 10),
+      createdAt: Date.now(),
+    };
+    saveConfig(cfg);
+    console.log('\nInitialized Dispatch session.');
+    console.log('  Session ID :', cfg.sessionId);
+    console.log('  Relay      :', cfg.relay);
+    console.log('  CLI        :', cfg.command);
+    console.log('  Saved to   :', FILE);
+    console.log('\nNext: dispatch pair  \u2192  dispatch start\n');
+  });
+
+program.command('pair')
+  .description('Mint a pairing code from the relay, print QR (opens scan page on 127.0.0.1)')
+  .option('-p, --port <n>', 'local HTTP port', String(PORT_PAIR_DEFAULT))
+  .action(async (opts) => {
+    const cfg = requireConfig();
+    const relay = cfg.relay.replace(/\/+$/, '');
+    let code: string;
+    let ttlMin: number;
+    try {
+      const mint = await mintClientCode(relay, cfg.sessionId);
+      code = mint.code;
+      ttlMin = Math.max(1, Math.round((mint.expiresAt - Date.now()) / 60_000));
+    } catch (err) {
+      console.error('[pair failed] Could not mint code from relay:', (err as Error).message);
+      console.error('  Check your internet connection and the relay URL.');
+      process.exit(1);
+    }
+    const pairUrl = `${relay.replace(/^http/, 'https')}/pair?session=${cfg.sessionId}&code=${code}`;
+    console.log('\n┌─ DispatchFreeBuff Pairing ─────────────────────┐');
+    console.log('│ Scan QR, or open on your iPhone:               │');
+    console.log(`│  ${pairUrl.padEnd(46)} │`);
+    console.log(`│                                                  │`);
+    console.log(`│  Code:  ${code}   (expires in ~${ttlMin} min)        │`);
+    console.log('└──────────────────────────────────────────────────┘\n');
+    try {
+      qrcodeTerminal.generate(pairUrl, { small: false }); // larger blocks → easier to scan from a QR app
+    } catch {
+      console.log('(terminal QR render failed — use the HTML file below)');
+    }
+    // ALSO write a beautiful HTML page with embedded QR for reliable scanning.
+    // PowerShell often mangles Unicode QR blocks, so the HTML file is the
+    // rock-solid fallback. Just `start` it from File Explorer.
+    const qrHtmlPath = path.join(DIR, 'pair-qr.html');
+    try {
+      writePairQrHtml(qrHtmlPath, pairUrl);
+      console.log(`\nSaved QR page → ${qrHtmlPath}`);
+      console.log(`  Open it (e.g. double-click in File Explorer) to scan a clean QR with your phone.`);
+    } catch (e) {
+      console.log(`  (could not save HTML QR page: ${(e as Error).message})`);
+    }
+    const html = renderPairPage(pairUrl, code);
+    const port = parseInt(opts.port, 10);
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(html);
+    });
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`\nLocal scan page: http://127.0.0.1:${port}  (127.0.0.1 only — never reachable from outside)\n`);
+    });
+    console.log('Press Ctrl+C to exit.\n');
+    process.on('SIGINT', () => { server.close(); process.exit(0); });
+  });
+
+// HTML-escape any user-controlled value before inlining into the page
+function htmlEscape(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c] as string));
+}
+/**
+ * Save a self-contained HTML file with a scannable QR (uses jsdelivr's
+ * qrcode-generator library at load time). The daemon needs no QR library of
+ * its own — the user's BROWSER fetches the CDN when they open the file.
+ * Saved to ~/.dispatch/pair-qr.html so the user can `start <path>` it.
+ */
+function writePairQrHtml(filePath: string, url: string): void {
+  const safeUrl = htmlEscape(url);
+  const safeUrlJs = JSON.stringify(url);
+  const html = `<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DispatchFreeBuff — Pair QR</title>
+<style>
+:root{color-scheme:dark}
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#0b1020;color:#e8ecff;margin:0;padding:24px;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+h1{font-weight:600;margin:0 0 8px;font-size:22px;letter-spacing:-.01em}
+.sub{color:#98a4d9;font-size:14px;margin:0 0 24px;text-align:center;max-width:420px;line-height:1.5}
+.qr-wrap{background:#fff;padding:20px;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.4);margin-bottom:24px}
+.url{background:#12183a;padding:12px 14px;border-radius:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;word-break:break-all;max-width:520px;text-align:center;border:1px solid #283060;color:#98a4d9}
+.code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.4em;font-size:24px;text-align:center;background:#12183a;padding:14px 20px;border-radius:12px;font-weight:700;color:#a7f3d0;margin-top:14px;border:1px solid #283060}
+.e2e{color:#a7f3d0;font-size:12px;margin-top:14px;display:flex;align-items:center;gap:6px}
+.e2e::before{content:"🔒"}
+</style></head><body>
+<h1>📡  DispatchFreeBuff</h1>
+<p class="sub">Scan this QR with your phone camera. The pairing screen will open automatically:</p>
+<div class="qr-wrap"><div id="qr"></div></div>
+<div class="code" id="code"></div>
+<div class="url">${safeUrl}</div>
+<p class="e2e">End-to-end encrypted (ECDH P-256 + AES-256-GCM) — the relay can't read your prompts.</p>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script>
+try {
+  var q = qrcode(0, 'M');
+  q.addData(${safeUrlJs});
+  q.make();
+  document.getElementById('qr').innerHTML = q.createImgTag(6, 12);
+  var m = ${safeUrlJs}.match(/[?&]code=([A-Z0-9]+)/i);
+  if (m) document.getElementById('code').textContent = m[1].toUpperCase();
+} catch(e) {
+  var qr = document.getElementById('qr');
+  qr.innerHTML = '<p style="color:#b91c1c;padding:20px">QR library blocked. URL: ${safeUrl}</p>';
+}
+</script>
+</body></html>`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, html, 'utf8');
+}
+function renderPairPage(url: string, code: string): string {
+  const safeUrl = htmlEscape(url);
+  const safeCode = htmlEscape(code);
+  const safeUrlJs = JSON.stringify(url);
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DispatchFreeBuff — Pair</title>
+<style>
+:root{color-scheme:dark}
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#0b1020;color:#e8ecff;margin:0;padding:24px;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{max-width:520px;width:100%;background:#12183a;border-radius:18px;padding:28px;box-shadow:0 24px 60px #0006}
+h1{font-size:22px;margin:0 0 6px;letter-spacing:.2px}
+p.sub{color:#98a4d9;font-size:14px;line-height:1.55;margin:0 0 18px}
+.qr{background:white;border-radius:14px;padding:14px;display:flex;justify-content:center;margin-bottom:18px}
+.code{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.4em;font-size:30px;text-align:center;background:#0b1020;padding:16px;border-radius:14px;font-weight:700;border:1px solid #283060}
+.url{word-break:break-all;color:#98a4d9;font-size:12px;margin-top:14px;font-family:ui-monospace,Consolas,monospace}
+.e2e{color:#a7f3d0;font-size:12px;margin-top:8px;display:flex;align-items:center;gap:6px}
+.e2e::before{content:"🔒"}
+</style></head><body>
+<div class="card">
+  <h1>📡  DispatchFreeBuff</h1>
+  <p class="sub">On your iPhone, open the URL below, then enter the code on the pairing screen.</p>
+  <div class="qr"><canvas id="qr"></canvas></div>
+  <div class="code">${safeCode}</div>
+  <div class="url">${safeUrl}</div>
+  <p class="e2e">End-to-end encrypted (ECDH P-256 + AES-256-GCM). The relay can't read your prompts.</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script>
+try { QRCode.toCanvas(document.getElementById('qr'), ${safeUrlJs}, { width: 280, margin: 1, color: { dark: '#0b1020', light: '#fff' } }); }
+catch (e) { document.getElementById('qr').outerHTML = '<p style="color:#ffb">QR library blocked — scan the URL above manually.</p>'; }
+</script>
+</body></html>`;
+}
+
+program.command('start')
+  .description('Run the daemon in the foreground')
+  .option('--no-watchdog', 'do not auto-restart freebuff on crash')
+  .option('--max-restarts <n>', 'max auto-restart attempts', '3')
+  .action(async (opts) => {
+    const cfg = requireConfig();
+    const lineBuf = new LineBuffer();
+    const outBuf = new OutputRollbackBuffer();
+    let seq = 0;
+    let restarts = 0;
+    const e2eState = e2e.newE2EState();
+    let ready = false; // becomes true when key_exchange completes
+    const pendingOutbound: EncryptedInner[] = [];
+    let clientRekeyPending = false; // true while we wait for a fresh key_exchange from the client
+
+    function log(msg: string) { console.error(`[daemon] ${msg}`); }
+
+    function makeTerm() {
+      return pty.spawn(cfg.command, cfg.args, {
+        name: 'xterm-256color',
+        cols: cfg.cols,
+        rows: cfg.rows,
+        cwd: process.cwd(),
+        env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', COLORTERM: 'truecolor' },
+      });
+    }
+    let term = makeTerm();
+    log(`started ${cfg.command} (${cfg.cols}x${cfg.rows}) session=${cfg.sessionId.slice(0, 8)}…`);
+    attachTerm(term);
+
+    const relay = new RelaySocket(relayWsUrl(cfg), {
+      sessionId: cfg.sessionId, token: cfg.daemonToken, role: 'daemon',
+    });
+
+    /** Convert an output_chunk or system message to the encrypted-inner shape. */
+    function toInner(msg: AnyServerMessage): EncryptedInner | null {
+      if (msg.type === 'output_chunk') {
+        return { t: 'output_chunk', id: msg.id, sessionId: msg.sessionId, content: msg.content, seq: msg.seq, timestamp: msg.timestamp };
+      }
+      if (msg.type === 'system') {
+        // We only forward daemon-originated system events through encryption.
+        // Relay-originated events (ready, *_connected, revoked) stay plaintext
+        // on the wire and reach the client directly from the relay.
+        return { t: 'system', sessionId: msg.sessionId, event: msg.event as 'crashed' | 'restarted', message: msg.message, timestamp: msg.timestamp };
+      }
+      return null;
+    }
+
+    /** Send a content message: encrypt if key ready, otherwise buffer.
+     *  ping/pong are always sent plaintext. */
+    function sendContent(msg: AnyServerMessage) {
+      if (msg.type === 'ping' || msg.type === 'pong') {
+        relay.sendRaw({ v: 2, type: msg.type, ts: msg.ts });
+        return;
+      }
+      const inner = toInner(msg);
+      if (!inner) return;
+      if (E2E_DISABLED) {
+        // Plaintext envelope. Daemon's keypair is unused in this mode.
+        relay.sendRaw({ v: 2, type: 'plain', ...inner });
+        return;
+      }
+      if (!ready || !e2eState.sharedKey) {
+        pendingOutbound.push(inner);
+        return;
+      }
+      try {
+        const env = e2e.encryptInner(e2eState, 'daemon', inner);
+        relay.sendRaw(env);
+      } catch (err) { log(`encrypt failed: ${(err as Error).message}`); }
+    }
+
+    function flushPending() {
+      while (pendingOutbound.length > 0) {
+        const inner = pendingOutbound.shift()!;
+        if (E2E_DISABLED) {
+          try { relay.sendRaw({ v: 2, type: 'plain', ...inner }); }
+          catch (err) { log(`flush failed: ${(err as Error).message}`); pendingOutbound.unshift(inner); break; }
+          continue;
+        }
+        if (!ready || !e2eState.sharedKey) { pendingOutbound.unshift(inner); break; }
+        try { relay.sendRaw(e2e.encryptInner(e2eState, 'daemon', inner)); }
+        catch (err) { log(`flush failed: ${(err as Error).message}`); pendingOutbound.unshift(inner); break; }
+      }
+    }
+
+    function attachTerm(t: ReturnType<typeof pty.spawn>) {
+      t.onData((chunk: string) => {
+        const lines = lineBuf.push(chunk);
+        for (const line of lines) {
+          seq += 1; outBuf.push(seq, line);
+          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: line, seq, timestamp: Date.now() });
+        }
+      });
+      t.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+        sendContent(<SystemMessage>{ type: 'system', sessionId: cfg.sessionId, event: 'crashed', message: `exit=${exitCode} signal=${signal ?? 0}`, timestamp: Date.now() });
+        log(`freebuff exited code=${exitCode} signal=${signal}`);
+        const max = parseInt(opts.maxRestarts, 10);
+        if (opts.watchdog && restarts < max) {
+          restarts += 1;
+          log(`restarting (attempt ${restarts}/${max})…`);
+          setTimeout(() => {
+            try { t.kill(); } catch {}
+            term = makeTerm();
+            attachTerm(term);
+            sendContent(<SystemMessage>{ type: 'system', sessionId: cfg.sessionId, event: 'restarted', timestamp: Date.now() });
+          }, 1500);
+        } else {
+          relay.close();
+          process.exit(exitCode ?? 1);
+        }
+      });
+    }
+
+    /** Handle a decrypted inner payload from the client. */
+    function handleInner(inner: EncryptedInner) {
+      if (inner.t === 'prompt') {
+        log(`prompt received (${inner.text.length} chars)`);
+        try { term.write(inner.text); term.write('\r'); } catch (e) { log(`write failed: ${(e as Error).message}`); }
+      } else if (inner.t === 'sync_request') {
+        const missed = outBuf.since(inner.sinceSeq);
+        log(`sync_request sinceSeq=${inner.sinceSeq} → replaying ${missed.length} chunks`);
+        for (const c of missed) {
+          sendContent({ type: 'output_chunk', id: newId(), sessionId: cfg.sessionId, content: c.content, seq: c.seq, timestamp: c.ts });
+        }
+      }
+    }
+
+    relay.onMessage((raw: string) => {
+      let msg: any;
+      try { msg = JSON.parse(raw); } catch { return; }
+
+      // Plaintext ping/pong
+      if (msg.type === 'ping') { relay.sendRaw({ v: 2, type: 'pong', ts: msg.ts ?? Date.now() }); return; }
+
+      // E2E handshake: client → daemon (must arrive first)
+      if (msg.type === 'key_exchange' && msg.v === 2) {
+        if (!msg.clientKey || typeof msg.clientKey !== 'object') { log('key_exchange: missing clientKey'); return; }
+        try {
+          const peerJwk = msg.clientKey as crypto.JsonWebKey;
+          // Re-derive (even if we already had a key — this is a rekey request)
+          e2e.clearSharedKey(e2eState);
+          e2eState.sharedKey = e2e.deriveSharedKey(e2eState.kp.privateKey, peerJwk);
+          ready = true;
+          clientRekeyPending = false;
+          relay.sendRaw({ v: 2, type: 'key_ack', from: 'daemon', daemonKey: e2eState.jwk });
+          log('E2E: key exchange complete');
+          flushPending();
+        } catch (err) { log(`key_exchange failed: ${(err as Error).message}`); }
+        return;
+      }
+
+      // Plaintext envelope (E2E_DISABLED mode — same shape as inner)
+      if (msg.type === 'plain' && msg.v === 2) {
+        const inner: EncryptedInner = (() => {
+          const { v: _v, type: _t, ...rest } = msg;
+          return rest as EncryptedInner;
+        })();
+        handleInner(inner);
+        return;
+      }
+
+      // Encrypted envelope (client → daemon, in v2 all content is wrapped)
+      if (msg.type === 'enc' && msg.v === 2) {
+        if (!ready || !e2eState.sharedKey) { log('received enc before key exchange — dropping'); return; }
+        let inner: EncryptedInner | null;
+        try { inner = e2e.decryptEnvelope(e2eState, 'client', msg); }
+        catch (err) { log(`decrypt failed: ${(err as Error).message}`); return; }
+        if (inner === null) { log('replay dropped'); return; }
+        handleInner(inner);
+        return;
+      }
+
+      // Rekey: daemon-initiated (we send this when we lose our shared key,
+      // e.g. after a reconnection without key_exchange). The client responds
+      // with a fresh key_exchange.
+      if (msg.type === 'rekey_required' && msg.v === 2) {
+        // The client should be the one initiating key_exchange. This message
+        // arriving from the client is unexpected — log and ignore.
+        log('unexpected rekey_required from client — ignored');
+        return;
+      }
+
+      // Legacy v1 plaintext — the v2 daemon doesn't speak v1. Log and drop.
+      if (msg.type === 'prompt' || msg.type === 'sync_request') {
+        log(`received legacy v1 message (${msg.type}) — ignoring. v2 daemon requires encrypted envelopes.`);
+        return;
+      }
+
+      log(`unknown message type: ${msg.type} (v=${msg.v ?? '?'})`);
+    });
+
+    relay.onClose(() => {
+      // unexpected-response already handled this and is about to exit. Don't
+      // log a fake "reconnecting" message.
+      if (relay.dying) return;
+      log('relay disconnected; reconnecting in background');
+      // Clear shared key on disconnect — we have no idea if it's still safe.
+      e2e.clearSharedKey(e2eState);
+      ready = false;
+    });
+
+    relay.onOpen(() => {
+      if (E2E_DISABLED) {
+        ready = true;
+        flushPending();
+      }
+      log('relay connected. Listening for prompts.');
+    });
+    const cleanup = () => {
+      log('shutting down');
+      try { term.kill(); } catch {}
+      e2e.destroyE2E(e2eState);
+      relay.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+  });
+
+program.command('status')
+  .description('Show config + ping the relay')
+  .action(async () => {
+    const cfg = requireConfig();
+    console.log('Session :', cfg.sessionId);
+    console.log('Relay   :', cfg.relay);
+    console.log('Created :', new Date(cfg.createdAt).toISOString());
+    console.log('CLI     :', `${cfg.command} ${cfg.args.join(' ')}`.trim());
+    console.log('Config  :', FILE);
+    try {
+      const res = await fetch(`${cfg.relay.replace(/^http/, 'https')}/health`);
+      const body = await res.text();
+      console.log('Ping    : OK →', body);
+    } catch (e) { console.log('Ping    : FAIL (', (e as Error).message, ')'); }
+  });
+
+program.command('ask <text...>')
+  .description('Run freebuff once locally and pipe the prompt (no relay)')
+  .action((text: string[]) => {
+    const cfg = requireConfig();
+    const t = pty.spawn(cfg.command, cfg.args, {
+      name: 'xterm-256color', cols: cfg.cols, rows: cfg.rows, cwd: process.cwd(),
+      env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', COLORTERM: 'truecolor' },
+    });
+    t.onData(d => process.stdout.write(stripAnsi(d)));
+    t.onExit(({ exitCode }: { exitCode: number }) => process.exit(exitCode ?? 0));
+    setTimeout(() => { t.write(text.join(' ')); t.write('\r'); }, 200);
+  });
+
+program.command('revoke')
+  .description('Rotate sessionId + tokens; force re-pairing (mints a fresh relay token)')
+  .action(async () => {
+    const cfg = loadConfig();
+    if (!cfg) { console.log('Nothing to revoke.'); return; }
+    const sessionId = newId();
+    const relay = cfg.relay.replace(/\/+$/, '');
+    console.log(`Revoking old session and minting a new daemon token with the relay...`);
+    let daemonToken: string;
+    try {
+      daemonToken = await mintDaemonToken(relay, sessionId);
+      console.log('  \u2713 New daemon token registered. Old session+token are now invalid.');
+    } catch (err) {
+      console.error('[revoke failed] Could not mint new token:', (err as Error).message);
+      console.error('  Your current session is unchanged.');
+      return;
+    }
+    saveConfig({ ...cfg, sessionId, daemonToken, createdAt: Date.now() });
+    console.log('New session:', sessionId);
+    console.log('Run `dispatch pair` then `dispatch start` (phone must scan the new QR).');
+  });
+
+program.parseAsync().catch(err => { console.error(err); process.exit(1); });

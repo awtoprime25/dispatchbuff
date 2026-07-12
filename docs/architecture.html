@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DispatchFreeBuff · Onde vai a tua mensagem</title>
+  <style>
+    :root {
+      --bg:       #0b1020;
+      --bg-2:     #0e1530;
+      --surface:  #12183a;
+      --surface-2:#1a2150;
+      --border:   #283060;
+      --line:     #2c356a;
+      --text:     #e8ecff;
+      --text-mut: #98a4d9;
+      --text-dim: #6c79b2;
+      --e2e:      #a7f3d0;       /* encrypted/active indicators */
+      --plain:    #fde68a;       /* plaintext warning */
+      --cipher:   #93c5fd;       /* ciphertext / cipher */
+      --amber:    #ffa657;       /* external (phone) */
+      --blue:     #58a6ff;       /* service */
+      --green:    #7ee787;       /* process */
+      --red:      #fca5a5;       /* error/danger */
+    }
+* { box-sizing: border-box; }
+    html, body { margin:0; padding:0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1140px; margin: 0 auto; padding: 48px 24px 96px; }
+    a { color: var(--cipher); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ───────── Header ───────── */
+    header { margin-bottom: 40px; }
+    .eyebrow {
+      display:inline-flex; align-items:center; gap:8px;
+      font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+      font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--text-mut); padding: 6px 10px; border:1px solid var(--border);
+      border-radius: 999px; background: var(--surface);
+    }
+    .eyebrow .dot { width:7px; height:7px; border-radius:50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+    h1 {
+      font-size: clamp(32px, 4.4vw, 48px);
+      letter-spacing: -.018em; line-height: 1.05; font-weight: 700;
+      margin: 18px 0 14px;
+      background: linear-gradient(180deg, var(--text) 0%, var(--text-mut) 130%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .lede {
+      font-size: 17px; color: var(--text-mut); max-width: 68ch; margin: 0;
+    }
+    .lede strong { color: var(--text); font-weight: 600; }
+
+    /* ───────── Section heading ───────── */
+    section { margin-top: 56px; }
+    .sec-head {
+      display:flex; align-items:baseline; gap:14px; margin-bottom: 22px;
+      padding-bottom: 12px; border-bottom: 1px solid var(--border);
+    }
+    .sec-head h2 {
+      font-size: 22px; font-weight: 600; letter-spacing: -.012em; margin: 0;
+    }
+    .sec-head .num {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 11px; color: var(--text-mut);
+      padding: 3px 8px; border:1px solid var(--border); border-radius: 6px;
+    }
+    .sec-head .meta { color: var(--text-mut); font-size: 13px; }
+
+    /* ───────── Flow diagram ───────── */
+    .flow-frame {
+      background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%);
+      border: 1px solid var(--border); border-radius: 18px;
+      padding: 22px; overflow-x: auto;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .flow-frame svg { display:block; min-width: 920px; width: 100%; height: auto; }
+    .flow-legend { display:flex; flex-wrap:wrap; gap: 10px; margin-top: 18px; font-size: 12.5px; color: var(--text-mut); }
+    .flow-legend .lg { display:inline-flex; align-items:center; gap: 6px; padding: 5px 10px;
+      background: var(--surface); border:1px solid var(--border); border-radius: 999px; }
+    .flow-legend .swatch { width:10px; height:10px; border-radius:3px; }
+    .sw-amber { background: var(--amber); }
+    .sw-blue  { background: var(--blue); }
+    .sw-green { background: var(--green); }
+    .sw-cipher{ background: var(--cipher); border:1px solid var(--line); }
+    .sw-plain { background: var(--plain); }
+
+    /* ───────── Matrix table ───────── */
+    .matrix-wrap { overflow-x: auto; border:1px solid var(--border); border-radius: 14px; }
+    table.matrix {
+      width: 100%; min-width: 720px; border-collapse: collapse;
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px;
+    }
+    table.matrix thead th {
+      background: var(--surface); color: var(--text-mut);
+      padding: 12px 14px; text-align: left; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; font-size: 11px;
+      border-bottom: 1px solid var(--border);
+    }
+    table.matrix tbody td {
+      padding: 11px 14px; border-bottom: 1px solid var(--line);
+      color: var(--text); vertical-align: top;
+    }
+    table.matrix tbody tr:last-child td { border-bottom: none; }
+    table.matrix tbody tr:hover { background: var(--surface-2); }
+    .loc { color: var(--text-mut); }
+    .what { color: var(--text); }
+    .badge { display:inline-block; font-size: 10.5px; padding: 3px 8px; border-radius: 999px;
+      font-weight: 600; letter-spacing: .04em;
+    }
+    .b-on  { background: rgba(167,243,208,.12); color: var(--e2e);   border:1px solid rgba(167,243,208,.32); }
+    .b-off { background: rgba(253,230,138,.12); color: var(--plain); border:1px solid rgba(253,230,138,.32); }
+    .b-mix { background: rgba(147,197,253,.10); color: var(--cipher);border:1px solid rgba(147,197,253,.28); }
+
+    /* ───────── Step cards ───────── */
+    .steps { display: grid; gap: 18px; }
+    .step {
+      background: var(--surface); border:1px solid var(--border); border-radius: 14px;
+      padding: 20px 22px;
+      transition: transform .15s ease, border-color .15s ease, background .15s ease;
+    }
+    .step:hover { border-color: var(--line); background: var(--surface-2); transform: translateY(-1px); }
+    .step-head {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 14px;
+      align-items: baseline; margin-bottom: 10px;
+    }
+    .step-n {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12px; color: var(--text-mut);
+      padding: 4px 9px; border:1px solid var(--border); border-radius: 6px;
+      background: var(--bg-2);
+    }
+    .step-title {
+      font-size: 16.5px; font-weight: 600; letter-spacing: -.008em;
+    }
+    .step-loc {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 11.5px; color: var(--text-mut);
+    }
+    .step-loc code {
+      background: var(--bg-2); color: var(--cipher);
+      padding: 2px 7px; border-radius: 5px; border:1px solid var(--border);
+    }
+    .step-body p { margin: 0 0 12px; color: var(--text-mut); }
+    .step-body p strong { color: var(--text); font-weight: 600; }
+    pre {
+      background: var(--bg-2); border:1px solid var(--border); border-radius: 10px;
+      padding: 13px 16px; margin: 0;
+      font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+      font-size: 12.5px; line-height: 1.55; color: var(--text);
+      overflow-x: auto;
+    }
+    pre .cm { color: var(--text-dim); font-style: italic; }
+    pre .kw { color: #c4a7e7; }
+    pre .str { color: var(--green); }
+    pre .num { color: #f5a97f; }
+    pre .fn { color: var(--blue); }
+    pre .id { color: var(--cipher); }
+    .meta-line {
+      display:flex; flex-wrap:wrap; gap: 8px; margin-top: 12px;
+      font-size: 11.5px; color: var(--text-mut);
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+    }
+    .ml-chip {
+      padding: 3px 9px; border:1px solid var(--border); border-radius: 999px;
+      background: var(--bg-2);
+    }
+    .ml-chip.is-e { color: var(--e2e); }
+    .ml-chip.is-p { color: var(--plain); }
+
+    /* ───────── Why callout ───────── */
+    .why {
+      background: linear-gradient(180deg, rgba(167,243,208,.06) 0%, transparent 100%);
+      border:1px solid rgba(167,243,208,.18); border-radius: 14px;
+      padding: 22px 24px;
+    }
+    .why h3 { margin: 0 0 12px; font-size: 17px; letter-spacing: -.008em; }
+    .why p { margin: 0 0 10px; color: var(--text-mut); }
+    .why p strong { color: var(--e2e); font-weight: 600; }
+
+    /* ───────── Trust store ───────── */
+    .store {
+      display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;
+      margin-top: 20px;
+    }
+    .store-card {
+      background: var(--bg-2); border:1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .store-card .k { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-mut); }
+    .store-card .v { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13.5px; color: var(--cipher); margin-top: 4px; }
+    .store-card .v.warning { color: var(--plain); }
+
+    /* ───────── Footer ───────── */
+    footer {
+      margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--border);
+      font-size: 12.5px; color: var(--text-mut); display: flex; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+    }
+    footer code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--cipher); }
+
+    /* ───────── Print ───────── */
+    @media print {
+      body { background: white; color: #10142a; }
+      .step, .why, .matrix-wrap, .flow-frame, header { box-shadow: none !important; border-color:#cdd3e8 !important; }
+      a { color: #2548a0; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow"><span class="dot"></span> DispatchFreeBuff · docs</span>
+    <h1>Quando escrevo no telemóvel,<br>para onde vai a mensagem?</h1>
+    <p class="lede">
+      Caminho completo de um prompt — da caixa de texto no telemóvel até ao
+      <strong>Freebuff</strong> a correr no PTY do teu PC, e a resposta a voltar como uma
+      bolha verde. Com a tabela de onde está <strong>plaintext</strong> e onde está
+      <strong>cifrado</strong> em cada momento.
+    </p>
+
+    <!-- ══════ STATUS CALL: what's deployed RIGHT NOW ══════ -->
+    <aside style="margin-top: 24px; padding: 14px 18px;
+                  background: rgba(253,230,138,.05);
+                  border:1px solid rgba(253,230,138,.28);
+                  border-radius: 12px; font-size: 13.5px; color: var(--text-mut);">
+      <strong style="color: var(--plain); font-family: ui-monospace,Menlo,Consolas,monospace; font-size: 12px;">ESTADO ACTUAL · </strong>
+      Daemon e telemóvel têm <code style="font-family:ui-monospace,Menlo;color:var(--plain);">E2E_DISABLED = true</code> em <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">daemon/src/index.ts</code> e <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">mobile/app.js</code>.
+      O doc mostra o caminho <strong style="color:var(--text)">completo</strong> (com a camada AES-GCM nos passos 2 / 6 / 9).
+      Em modo plaintext, a estrutura é a mesma mas não há ciphertext-badge — os envelopes saem como
+      <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">{v:2, type:'plain', …}</code>.
+      Quando o flag volta a <code style="font-family:ui-monospace,Menlo;color:var(--plain);">false</code>, é o que está descrito aqui.
+    </aside>
+  </header>
+
+  <!-- ─────────── FLOW DIAGRAM ─────────── -->
+  <section>
+    <div class="sec-head">
+      <span class="num">01</span>
+      <h2>O caminho em quatro caixas</h2>
+      <span class="meta">Telemóvel → Cloudflare → Daemon → Freebuff</span>
+    </div>
+    <div class="flow-frame">
+      <svg viewBox="0 0 1100 460" xmlns="http://www.w3.org/2000/svg" aria-label="DispatchFreeBuff data flow">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/>
+          </marker>
+          <linearGradient id="phoneGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#1a1f33"/><stop offset="1" stop-color="#0f1428"/>
+          </linearGradient>
+          <linearGradient id="cloudGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#172040"/><stop offset="1" stop-color="#0d1330"/>
+          </linearGradient>
+          <linearGradient id="daemonGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#172040"/><stop offset="1" stop-color="#0d1330"/>
+          </linearGradient>
+          <linearGradient id="freebuffGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#132f1f"/><stop offset="1" stop-color="#0a2014"/>
+          </linearGradient>
+          <filter id="drop" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+            <feOffset dx="0" dy="3" result="off"/>
+            <feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer>
+            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        <!-- ══ PHONE / PWA ══ -->
+        <g filter="url(#drop)">
+          <rect x="40" y="60" width="220" height="270" rx="14"
+                fill="url(#phoneGrad)" stroke="#ffa657" stroke-width="1.5"/>
+        </g>
+        <text x="150" y="92" text-anchor="middle" font-family="ui-sans-serif,system-ui" font-size="15" font-weight="700" fill="#e6edf3">📱 Telemóvel</text>
+        <text x="150" y="111" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#8b949e">mobile/app.js · PWA</text>
+
+        <g font-family="ui-monospace,Menlo,Consolas" font-size="10.5" fill="#dde3f5">
+          <rect x="58" y="130" width="184" height="46" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="68" y="148">$input.value</text>
+          <text x="68" y="167" fill="#a7f3d0">"Reply with…"</text>
+
+          <rect x="58" y="186" width="184" height="58" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="68" y="203">crypto.subtle</text>
+          <text x="68" y="219" fill="#93c5fd">.encrypt(</text>
+          <text x="80" y="234" fill="#c4a7e7">AAD: "v2|client|1"</text>
+
+          <rect x="58" y="254" width="184" height="58" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="68" y="271">WebSocket.send(</text>
+          <text x="80" y="286" fill="#93c5fd">wss://relay</text>
+          <text x="68" y="301" fill="#a7f3d0">{type:"enc",ct:…}</text>
+        </g>
+
+        <!-- ══ ARROW: phone ⇆ cloud (bidirecional — mesmo WS socket) ══ -->
+        <g>
+          <path d="M263 195 L 317 195" stroke="#8b949e" stroke-width="1.5" fill="none"
+                marker-start="url(#arr)" marker-end="url(#arr)"/>
+          <text x="290" y="180" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#93c5fd">WSS · TLS 1.3</text>
+          <text x="290" y="215" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="9.5" fill="#6c79b2">↕ mesmo socket · 1 pipe persistente</text>
+        </g>
+
+        <!-- ══ CLOUDFLARE WORKER ══ -->
+        <g filter="url(#drop)">
+          <rect x="320" y="60" width="240" height="270" rx="14"
+                fill="url(#cloudGrad)" stroke="#58a6ff" stroke-width="1.5"/>
+        </g>
+        <text x="440" y="92" text-anchor="middle" font-family="ui-sans-serif" font-size="15" font-weight="700" fill="#e6edf3">☁️ Cloudflare Worker</text>
+        <text x="440" y="111" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#8b949e">relay/src/index.ts + relay-do.ts</text>
+
+        <g font-family="ui-monospace,Menlo,Consolas" font-size="10.5" fill="#dde3f5">
+          <text x="338" y="142">↳ router('/pair/*','/ws')</text>
+          <text x="338" y="161" fill="#6c79b2">  ↓ sessionId → Durable Object</text>
+
+          <rect x="338" y="172" width="204" height="58" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="348" y="192">RelayDO.fetch(req)</text>
+          <text x="348" y="208" fill="#c4a7e7">acceptWebSocket(</text>
+          <text x="362" y="222" fill="#dde3f5">[role, sessionId])</text>
+
+          <text x="338" y="252" fill="#fde68a">⚠ NÃO tem a chave privada</text>
+          <text x="350" y="269" fill="#a7f3d0">→ só passa bytes opacos</text>
+          <text x="350" y="287" fill="#6c79b2">  (forward ws.send(message))</text>
+          <text x="338" y="310" fill="#93c5fd">  + emits system{daemon_connected,</text>
+          <text x="350" y="324" fill="#93c5fd">    daemon_disconnected, ready}</text>
+        </g>
+
+        <!-- ══ ARROW: cloud ⇆ daemon (bidirecional) ══ -->
+        <g>
+          <path d="M563 195 L 617 195" stroke="#8b949e" stroke-width="1.5" fill="none"
+                marker-start="url(#arr)" marker-end="url(#arr)"/>
+          <text x="590" y="180" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#93c5fd">WSS · TLS 1.3</text>
+          <text x="590" y="215" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="9.5" fill="#6c79b2">↕ mesmo socket · payload opaco</text>
+        </g>
+
+        <!-- ══ DAEMON ══ -->
+        <g filter="url(#drop)">
+          <rect x="620" y="60" width="220" height="270" rx="14"
+                fill="url(#daemonGrad)" stroke="#58a6ff" stroke-width="1.5"/>
+        </g>
+        <text x="730" y="92" text-anchor="middle" font-family="ui-sans-serif" font-size="15" font-weight="700" fill="#e6edf3">🖥️ Daemon</text>
+        <text x="730" y="111" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#8b949e">daemon/src/index.ts</text>
+
+        <g font-family="ui-monospace,Menlo,Consolas" font-size="10.5" fill="#dde3f5">
+          <rect x="638" y="130" width="184" height="56" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="648" y="149">RelaySocket (ws)</text>
+          <text x="648" y="166">relay.onMessage(</text>
+          <text x="660" y="181" fill="#93c5fd">raw → JSON.parse)</text>
+
+          <rect x="638" y="196" width="184" height="56" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="648" y="214">crypto.decryptEnv(</text>
+          <text x="648" y="231" fill="#c4a7e7">AAD: "v2|client|&lt;seq&gt;"</text>
+          <text x="648" y="247" fill="#a7f3d0">→ inner JSON {t:'prompt'}</text>
+
+          <rect x="638" y="262" width="184" height="58" rx="6" fill="#0b1020" stroke="#283060"/>
+          <text x="648" y="280">node-pty</text>
+          <text x="648" y="296" fill="#fde68a">term.write(text+"\r")</text>
+          <text x="648" y="312" fill="#6c79b2">  → pseudo-terminal write</text>
+        </g>
+
+        <!-- ══ ARROW: daemon ⇌ freebuff (PLAIN — bidirectional pty) ══ -->
+        <g>
+          <path d="M843 280 L 897 280" stroke="#fde68a" stroke-width="1.7" fill="none"
+                marker-start="url(#arr)" marker-end="url(#arr)"/>
+          <text x="870" y="266" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#fde68a">PTY · plain</text>
+          <text x="870" y="298" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="9.5" fill="#6c79b2">↕ mesmo `term` · term.write + t.onData</text>
+        </g>
+
+        <!-- ══ FREEBUFF (target) ══ -->
+        <g filter="url(#drop)">
+          <rect x="900" y="180" width="160" height="180" rx="14"
+                fill="url(#freebuffGrad)" stroke="#7ee787" stroke-width="1.5"/>
+        </g>
+        <text x="980" y="212" text-anchor="middle" font-family="ui-sans-serif" font-size="15" font-weight="700" fill="#e6edf3">🎯 Freebuff</text>
+        <text x="980" y="231" text-anchor="middle" font-family="ui-monospace,Menlo" font-size="10.5" fill="#8b949e">PTY · stdin/stdout</text>
+
+        <g font-family="ui-monospace,Menlo,Consolas" font-size="10.5" fill="#dde3f5">
+          <text x="918" y="262" fill="#fde68a">lê prompt do tty</text>
+          <text x="918" y="280" fill="#a7f3d0">→ pensa/escreve tokens</text>
+          <text x="918" y="298" fill="#fde68a">stdout → ANSI codes</text>
+          <text x="918" y="316" fill="#6c79b2">  → daemon lê `t.onData`</text>
+          <text x="918" y="334" fill="#93c5fd">  → stripAnsi + line split</text>
+        </g>
+
+        <!-- (sem path de retorno separado — as setas bidireccionais em cima já cobrem ida-e-volta) -->
+
+        <!-- ══ KEY BADGE ROW ══ -->
+        <g font-family="ui-monospace,Menlo,Consolas" font-size="11">
+          <rect x="40" y="395" width="1010" height="42" rx="8" fill="#0b1020" stroke="#283060"/>
+          <text x="60" y="416" fill="#a7f3d0" font-weight="700">✓ ECDH P-256</text>
+          <text x="180" y="416" fill="#93c5fd">→ HKDF-SHA256</text>
+          <text x="295" y="416" fill="#a7f3d0" font-weight="700">→ AES-256-GCM</text>
+          <text x="430" y="416" fill="#c4a7e7">· AAD = "v2|&lt;role&gt;|&lt;seq&gt;"</text>
+          <text x="640" y="416" fill="#8b949e">· nonce 12 bytes random</text>
+          <text x="830" y="416" fill="#fde68a">· replay window monotonic</text>
+          <text x="60" y="429" fill="#6c79b2">quando E2E_DISABLED=true, as setas amarelas/plain expandem-se para toda a fronteira WS</text>
+        </g>
+      </svg>
+      <div class="flow-legend">
+        <span class="lg"><span class="swatch sw-amber"></span> Telemóvel (origem)</span>
+        <span class="lg"><span class="swatch sw-blue"></span> Serviço / relay</span>
+        <span class="lg"><span class="swatch sw-green"></span> Processo (Freebuff)</span>
+        <span class="lg"><span class="swatch sw-cipher"></span> Cifrado (não-legível)</span>
+        <span class="lg"><span class="swatch sw-plain"></span> Plaintext (legível)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── MATRIX ─────────── -->
+  <section>
+    <div class="sec-head">
+      <span class="num">02</span>
+      <h2>Onde está plaintext, onde está cifrado</h2>
+      <span class="meta">a tabela mais importante</span>
+    </div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Local</th>
+            <th>O que existe lá</th>
+            <th>Plaintext?</th>
+            <th>Cifrado?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="loc">📱 Caixa de texto (DOM)</td><td class="what">A string que escreveste</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">📱 crypto.subtle.encrypt (Web Crypto)</td><td class="what">A gerar {seq, nonce, ct}</td><td><span class="badge b-off">—</span></td><td><span class="badge b-on">AES-GCM</span></td></tr>
+          <tr><td class="loc">📱 WebSocket.send (frame)</td><td class="what">JSON envelope + TLS</td><td><span class="badge b-off">—</span></td><td><span class="badge b-on">TLS 1.3</span></td></tr>
+          <tr><td class="loc">☁️ Cloudflare Worker / DO</td><td class="what">Routing + WS forward + storage</td><td><span class="badge b-off">nunca</span></td><td><span class="badge b-on">opaco (sem chave)</span></td></tr>
+          <tr><td class="loc">☁️ Worker emits system events</td><td class="what">readied/connected — texto de routing, não de prompt</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">🖥️ Daemon relay.onMessage</td><td class="what">JSON parseado</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">🖥️ crypto.decryptEnv</td><td class="what">A decifrar {seq, ct} com sharedKey</td><td><span class="badge b-off">durante</span></td><td><span class="badge b-on">AES-GCM</span></td></tr>
+          <tr><td class="loc">🖥️ Inner JSON {t:'prompt', text}</td><td class="what">A string em memória do Node</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">🖥️ PTY (node-pty)</td><td class="what">term.write(text+"\r") → tty virtual</td><td><span class="badge b-on">SIM (stdin)</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">🎯 Freebuff process</td><td class="what">Lê prompt, gera tokens, escreve stdout</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></tr>
+          <tr><td class="loc">🖥️ Daemon t.onData → lineBuf</td><td class="what">stripAnsi + split por \n</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+          <tr><td class="loc">🖥️ crypto.encryptEnv (envio)</td><td class="what">A cifrar {seq, nonce, ct}</td><td><span class="badge b-off">durante</span></td><td><span class="badge b-on">AES-GCM</span></td></tr>
+          <tr><td class="loc">🖥️ WebSocket.send (frame back)</td><td class="what">JSON envelope + TLS</td><td><span class="badge b-off">—</span></td><td><span class="badge b-on">TLS 1.3</span></td></tr>
+          <tr><td class="loc">☁️ Cloudflare forward (return)</td><td class="what">Mesmo relay opaco</td><td><span class="badge b-off">nunca</span></td><td><span class="badge b-on">opaco</span></td></tr>
+          <tr><td class="loc">📱 crypto.subtle.decrypt</td><td class="what">A decifrar a resposta</td><td><span class="badge b-off">durante</span></td><td><span class="badge b-on">AES-GCM</span></td></tr>
+          <tr><td class="loc">📱 addBubble(...) → DOM</td><td class="what">A linha de chegada visível</td><td><span class="badge b-on">SIM</span></td><td><span class="badge b-off">—</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="color: var(--text-mut); margin-top: 14px; font-size: 13.5px;">
+      Conclusão prática: <strong style="color:var(--text)">a única "ponte" de plaintext fora do teu controlo é o daemon e o PTY no teu PC</strong>. Tudo o que passa pela Cloudflare é opaco — sem chave privada, nunca lê conteúdo. Os tokens de sessão estão em <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">~/.dispatch/config.json</code> na tua máquina.
+    </p>
+  </section>
+
+  <!-- ─────────── STEPS ─────────── -->
+  <section>
+    <div class="sec-head">
+      <span class="num">03</span>
+      <h2>Os 10 passos, com código real</h2>
+      <span class="meta">Cada passo tem uma localização exata</span>
+    </div>
+
+    <div class="steps">
+
+      <!-- ─── 1 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 01</span>
+          <span class="step-title">Escreves na caixa de texto</span>
+          <span class="step-loc"><code>mobile/app.js:388–406</code></span>
+        </header>
+        <div class="step-body">
+          <p>A string entra no DOM do telemóvel e fica numa variável JS. A partir daqui há dois caminhos consoante o <strong>flag E2E_DISABLED</strong>.</p>
+          <pre><span class="cm">// mobile/app.js</span>
+$form.addEventListener('submit', <span class="kw">async</span> e =&gt; {
+  e.preventDefault();
+  <span class="kw">const</span> text = $input.value.trim();      <span class="cm">// "Reply with E2E_WORKS_NOW"</span>
+  ...
+});</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-p">plaintext: SIM</span>
+            <span class="ml-chip">local: DOM do PWA</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 2 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 02</span>
+          <span class="step-title">Telemóvel constrói o envelope</span>
+          <span class="step-loc"><code>mobile/app.js:444-460 (encryptEnvelope)</code></span>
+        </header>
+        <div class="step-body">
+          <p>Com E2E ligado: AES-GCM-256 com nonce aleatório de 12 bytes + AAD <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">"v2|client|&lt;seq&gt;"</code>. Com E2E desligado: o telemóvel envia directamente um envelope <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">{v:2, type:'plain', ...inner}</code> sem cifrar.</p>
+          <pre><span class="cm">// E2E-on path (encrypt branch)</span>
+<span class="kw">const</span> nonce = crypto.getRandomValues(<span class="kw">new</span> Uint8Array(<span class="num">12</span>));
+<span class="kw">const</span> plain = <span class="kw">new</span> TextEncoder().encode(JSON.stringify(inner));
+session.outSeq += <span class="num">1</span>;
+<span class="kw">const</span> aad = <span class="kw">new</span> TextEncoder().encode(<span class="str">'v2|client|'</span> + session.outSeq);
+<span class="kw">const</span> ct = <span class="kw">await</span> crypto.subtle.encrypt(
+  { name: <span class="str">'AES-GCM'</span>, iv: nonce, additionalData: aad },
+  session.sharedKey, plain,
+);
+<span class="kw">return</span> { v: <span class="num">2</span>, type: <span class="str">'enc'</span>, seq: session.outSeq,
+  nonce: btoa(...), ct: btoa(...new Uint8Array(ct)) };</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-e">cifrado: AES-GCM</span>
+            <span class="ml-chip">AAD: "v2|client|&lt;seq&gt;"</span>
+            <span class="ml-chip">nonce: 12B random</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 3 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 03</span>
+          <span class="step-title">Travessia telemóvel → Cloudflare</span>
+          <span class="step-loc"><code>mobile/app.js:65–77 (+ ws URL building)</code></span>
+        </header>
+        <div class="step-body">
+          <p>WebSocket frames UTF-8 JSON, encapsulados em TLS 1.3. O URL traz <code style="font-family:ui-monospace,Menlo;color:var(--cipher);">?sessionId=X&amp;token=Y&amp;role=client&amp;v=2</code> — o token é o que <code>pair/redeem</code> te deu, único por <code>role+sessionId</code>.</p>
+          <div class="meta-line">
+            <span class="ml-chip is-e">TLS 1.3</span>
+            <span class="ml-chip">role=client</span>
+            <span class="ml-chip">sessionId+token</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 4 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 04</span>
+          <span class="step-title">Cloudflare Worker aceita</span>
+          <span class="step-loc"><code>relay/src/index.ts:55–62 + relay-do.ts:79–112</code></span>
+        </header>
+        <div class="step-body">
+          <p>O router mete a request no Durable Object certo (1 por sessionId). O DO valida o token, valida role+sessionId, e acorda o socket hibernatable.</p>
+          <pre><span class="cm">// relay/src/relay-do.ts</span>
+<span class="kw">const</span> rec = <span class="kw">await</span> <span class="kw">this</span>.state.storage.get(<span class="str">`token:<span class="id">${token}</span>`</span>);
+<span class="kw">if</span> (!rec || rec.expiresAt &lt; Date.now()) <span class="kw">return</span> <span class="kw">new</span> Response(<span class="str">'expired token'</span>, { status: <span class="num">403</span> });
+<span class="kw">if</span> (rec.role !== role) <span class="kw">return</span> <span class="kw">new</span> Response(<span class="str">'role mismatch'</span>, { status: <span class="num">403</span> });
+<span class="kw">this</span>.state.acceptWebSocket(server, [role, rec.sessionId]);</pre>
+          <div class="meta-line">
+            <span class="ml-chip">+ emits <code>{type:'system',event:'ready'}</code></span>
+            <span class="ml-chip">+ announces <code>client_connected</code></span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 5 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 05</span>
+          <span class="step-title">Relay forward o envelope (cego)</span>
+          <span class="step-loc"><code>relay/src/relay-do.ts:99–138 (webSocketMessage)</code></span>
+        </header>
+        <div class="step-body">
+          <p>O relay não vê conteúdo, não tem chave. Manda o que recebeu ao daemon. Da mesma forma no sentido inverso, daemon → clients. <strong>Nota</strong>: o relay também emite 2–3 <code>system</code> events em <em>plaintext</em> (ex: <code>ready</code>, <code>daemon_connected</code>) — esses são só routing/health, nunca conteúdo do utilizador.</p>
+          <pre><span class="cm">// relay/src/relay-do.ts</span>
+<span class="kw">if</span> (role === <span class="str">'client'</span>) {
+  <span class="cm">// cliente mandou prompt → reenvia pro daemon (cego)</span>
+  <span class="kw">for</span> (<span class="kw">const</span> peer <span class="kw">of</span> <span class="kw">this</span>.state.getWebSockets(<span class="str">'daemon'</span>)) {
+    <span class="kw">try</span> { peer.send(message); } <span class="kw">catch</span> {}
+  }
+  <span class="cm">// também emite system{event:'client_prompt'} para viewers (routing, não conteúdo)</span>
+  <span class="kw">const</span> sys = JSON.stringify({ type:<span class="str">'system'</span>, event:<span class="str">'client_prompt'</span>, ... });
+  <span class="kw">for</span> (<span class="kw">const</span> peer <span class="kw">of</span> <span class="kw">this</span>.state.getWebSockets(<span class="str">'viewer'</span>)) <span class="kw">try</span> { peer.send(sys); } <span class="kw">catch</span> {}
+}</pre>
+          <div class="meta-line">
+            <span class="ml-chip">no decryption here</span>
+            <span class="ml-chip">opaque byte-pipe</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 6 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 06</span>
+          <span class="step-title">Daemon decifra (se E2E_on)</span>
+          <span class="step-loc"><code>daemon/src/crypto.ts:119-140 (decryptEnvelope)</code></span>
+        </header>
+        <div class="step-body">
+          <p>Faz AES-GCM decrypt com a <code>sharedKey</code> calculada no handshake. O AAD <strong>tem que bater certo</strong> ou o auth-tag rejeita e logamos <code>Unsupported state or unable to authenticate data</code>.</p>
+          <pre><span class="cm">// daemon/src/crypto.ts</span>
+<span class="kw">const</span> decipher = crypto.createDecipheriv(<span class="str">'aes-256-gcm'</span>, state.sharedKey, nonce);
+decipher.setAAD(aadFor(<span class="str">'client'</span>, env.seq));
+decipher.setAuthTag(tag);
+<span class="kw">const</span> plain = Buffer.concat([decipher.update(data), decipher.final()]);
+state.inSeq = env.seq;          <span class="cm">// accept ONLY after successful decrypt</span>
+<span class="kw">return</span> JSON.parse(plain.toString(<span class="str">'utf8'</span>));</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-e">AES-256-GCM</span>
+            <span class="ml-chip">AAD: "v2|client|&lt;seq&gt;"</span>
+            <span class="ml-chip">replay window enforced</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 7 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 07</span>
+          <span class="step-title">Daemon escreve no PTY</span>
+          <span class="step-loc"><code>daemon/src/index.ts:244-249 (handleInner → term.write)</code></span>
+        </header>
+        <div class="step-body">
+          <p>O daemon tem um <code>pty.spawn('freebuff')</code>. Escrever no PTY é equivalente a <em>digitar + Enter</em> num terminal humano. O Freebuff recebe como input interactivo.</p>
+          <pre><span class="cm">// daemon/src/index.ts · handleInner()</span>
+<span class="kw">if</span> (inner.t === <span class="str">'prompt'</span>) {
+  log(<span class="str">`prompt received (${<span class="id">inner.text</span>.length} chars)`</span>);
+  <span class="kw">try</span> {
+    term.write(<span class="id">inner.text</span>);
+    term.write(<span class="str">'\r'</span>);                  <span class="cm">// carriage return = tecla Enter</span>
+  } <span class="kw">catch</span> (e) { log(<span class="str">`write failed: ${e.message}`</span>); }
+}</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-p">plaintext: SIM (stdin)</span>
+            <span class="ml-chip">local: tty virtual na tua máquina</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 8 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 08</span>
+          <span class="step-title">Freebuff processa, escreve resposta</span>
+          <span class="step-loc"><code>daemon/src/index.ts:226-238 (attachTerm) + 81-96 (LineBuffer)</code></span>
+        </header>
+        <div class="step-body">
+          <p>O <code>freebuff</code> corre no PTY. Quando imprime uma linha completa, o daemon particiona por <code>\n</code> e remove ANSI. Cada linha vira um <code>output_chunk</code> distinto.</p>
+          <pre><span class="cm">// daemon/src/index.ts · attachTerm()</span>
+t.onData((chunk) =&gt; {
+  <span class="kw">const</span> lines = lineBuf.push(chunk);    <span class="cm">// stripAnsi + split '\n'</span>
+  <span class="kw">for</span> (<span class="kw">const</span> line <span class="kw">of</span> lines) {
+    seq += <span class="num">1</span>;
+    outBuf.push(seq, line);
+    sendContent({ type: <span class="str">'output_chunk'</span>, ..., content: line, seq, ... });
+  }
+});</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-p">plaintext: SIM</span>
+            <span class="ml-chip">ANSI stripped em stripAnsi()</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 9 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 09</span>
+          <span class="step-title">Daemon cifra (se E2E_on) e responde</span>
+          <span class="step-loc"><code>daemon/src/crypto.ts:99-117 (encryptInner)</code></span>
+        </header>
+        <div class="step-body">
+          <p>Espelha do passo 6 mas com <code>senderRole='daemon'</code>. O AAD passa a <code>"v2|daemon|&lt;seq&gt;"</code> — diferente do AAD do cliente, e essa assimetria é propositada.</p>
+          <pre><span class="cm">// daemon/src/crypto.ts</span>
+state.outSeq += <span class="num">1</span>;
+<span class="kw">const</span> aad = aadFor(<span class="str">'daemon'</span>, state.outSeq);   <span class="cm">// "v2|daemon|&lt;seq&gt;"</span>
+<span class="kw">const</span> cipher = crypto.createCipheriv(<span class="str">'aes-256-gcm'</span>, state.sharedKey, nonce);
+cipher.setAAD(aad);
+<span class="kw">return</span> { v: <span class="num">2</span>, type: <span class="str">'enc'</span>, seq: state.outSeq,
+  nonce: nonce.toString(<span class="str">'base64'</span>),
+  ct: Buffer.concat([enc, tag]).toString(<span class="str">'base64'</span>) };</pre>
+          <div class="meta-line">
+            <span class="ml-chip is-e">AES-256-GCM</span>
+            <span class="ml-chip">AAD: "v2|daemon|&lt;seq&gt;"</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── 10 ─── -->
+      <article class="step">
+        <header class="step-head">
+          <span class="step-n">STEP 10</span>
+          <span class="step-title">Telemóvel recebe e mostra</span>
+          <span class="step-loc"><code>mobile/app.js:174-196 (decryptAndRender)</code></span>
+        </header>
+        <div class="step-body">
+          <p>Decifra, valida AAD, actualiza <code>inSeq</code>. Se for <code>t:'output_chunk'</code>, desenha uma bolha verde no chat.</p>
+          <pre><span class="cm">// mobile/app.js</span>
+<span class="kw">const</span> aad = <span class="kw">new</span> TextEncoder().encode(<span class="str">'v2|daemon|'</span> + msg.seq);
+<span class="kw">const</span> plain = <span class="kw">await</span> crypto.subtle.decrypt(
+  { name: <span class="str">'AES-GCM'</span>, iv: nonce, additionalData: aad },
+  session.sharedKey, ct);
+session.inSeq = msg.seq;
+<span class="kw">const</span> inner = JSON.parse(<span class="kw">new</span> TextDecoder().decode(plain));
+<span class="kw">if</span> (inner.t === <span class="str">'output_chunk'</span>) {
+  addBubble(<span class="str">'received'</span>, inner.content || <span class="str">''</span>);   <span class="cm">// ← bolha verde</span>
+}</pre>
+          <div class="meta-line">
+            <span class="ml-chip">state.inSeq = msg.seq</span>
+            <span class="ml-chip">lastSeq persisted em localStorage</span>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ─────────── WHY E2E ─────────── -->
+  <section>
+    <div class="sec-head">
+      <span class="num">04</span>
+      <h2>Porque isto é mesmo E2E</h2>
+      <span class="meta">três propriedades que importam</span>
+    </div>
+
+    <div class="why">
+      <h3>1 · A chave privada nunca sai do teu dispositivo</h3>
+      <p>O telemóvel gera um <strong>ECDH P-256 keypair efémero</strong> em cada pairing. Só a chave pública (<code>clientPub</code>) vai em plaintext para o relay. A chave privada fica na memória do browser. O daemon gera o seu próprio par no arranque. As duas chaves privadas vivem uma no Chrome do telemóvel, outra no Node do daemon.</p>
+
+      <h3>2 · O segredo partilhado é derivado separadamente em cada lado</h3>
+      <p>Ambos fazem <strong>ECDH + HKDF-SHA-256</strong> sobre o mesmo segredo partilhado (matemática do ECDH: <code>privA·pubB = privB·pubA</code>). Resultado: a mesma chave AES-256 em ambos. O relay nunca toca na derivação.</p>
+
+      <h3>3 · O AAD liga cada ciphertext à sua direcção e posição</h3>
+      <p>O Additional Authenticated Data é <code>"v2|&lt;role&gt;|&lt;seq&gt;"</code>. <strong>Significa</strong>: o relay não pode misturar envelopes entre sessões, nem reordená-los, nem trocar um <code>enc</code> do telemóvel por um do daemon — o auth-tag falha em qualquer troca.</p>
+    </div>
+
+    <div class="store">
+      <div class="store-card">
+        <div class="k">onde se guarda o config</div>
+        <div class="v">~/.dispatch/config.json</div>
+      </div>
+      <div class="store-card">
+        <div class="k">onde corre o daemon</div>
+        <div class="v">node dist/index.js start</div>
+      </div>
+      <div class="store-card">
+        <div class="k">onde corre o PTY</div>
+        <div class="v warning">freebuff / tty virtual</div>
+      </div>
+      <div class="store-card">
+        <div class="k">onde corre o relay</div>
+        <div class="v">Cloudflare Durable Object</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>DispatchFreeBuff · v2 (protocol) · arquivo de referência</span>
+    <span>em caso de dúvida: abrir o ficheiro <code>mobile/app.js</code>, <code>daemon/src/index.ts</code>, ou <code>relay/src/relay-do.ts</code></span>
+  </footer>
+
+</div>
+</body>
+</html>

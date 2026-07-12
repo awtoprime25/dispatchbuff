@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Dispatch">
+  <meta name="theme-color" content="#000000">
+  <title>DispatchFreeBuff</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/core.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/javascript.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/typescript.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/python.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/bash.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/json.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/xml.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/css.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/languages/markdown.min.js" defer></script>
+</head>
+<body class="app">
+  <header class="hdr">
+    <div class="hdr-left">
+      <span id="status-dot" class="dot dot-off" aria-hidden="true"></span>
+      <span class="hdr-title">Dispatch</span>
+      <span class="status-text" id="status-text">offline</span>
+    </div>
+    <div class="hdr-right">
+      <span id="auth-badge" class="auth-badge hidden" title="End-to-end encryption status">
+        <span aria-hidden="true">🔒</span><span id="auth-text">E2E</span>
+      </span>
+      <button id="menu-btn" class="icon-btn" aria-label="Menu">⋯</button>
+    </div>
+  </header>
+
+  <main id="messages" class="messages" aria-live="polite"></main>
+
+  <form id="composer" class="composer" autocomplete="off">
+    <textarea id="input" rows="1" placeholder="Ask Freebuff…  (⏎ send · ⇧⏎ newline)" class="input" aria-label="Prompt"></textarea>
+    <button type="submit" id="send" class="send-btn" aria-label="Send" disabled>↑</button>
+  </form>
+
+  <nav id="menu" class="menu hidden" aria-hidden="true">
+    <button data-act="reconnect"><span class="menu-icon">↻</span> Reconnect <span class="menu-kbd">R</span></button>
+    <button data-act="clear"><span class="menu-icon">⌫</span> Clear chat</button>
+    <button data-act="copy-fp"><span class="menu-icon">⌗</span> Copy fingerprint</button>
+    <button data-act="logout" class="danger"><span class="menu-icon">⎋</span> Unpair device</button>
+  </nav>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#000000">
+  <title>Pair · DispatchFreeBuff</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="app pair">
+  <div class="pair-card">
+    <div class="pair-logo" aria-hidden="true">📡</div>
+    <h1>DispatchFreeBuff</h1>
+    <p class="sub">On the PC, run <code>dispatch pair</code>, then enter the 6-letter code below.</p>
+
+    <form id="manual" class="manual-form">
+      <input id="code" class="code-input" maxlength="6" placeholder="ABC123"
+             autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false"
+             aria-label="Pairing code">
+      <button type="submit" class="primary-btn">Pair</button>
+    </form>
+
+    <p id="status" class="status"></p>
+
+    <details class="scan-block">
+      <summary>Or scan with the camera</summary>
+      <video id="cam" class="cam" playsinline muted></video>
+      <canvas id="overlay" class="hidden"></canvas>
+    </details>
+  </div>
+
+  <script src="/pair.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+name = "dispatch-relay"
+main = "src/index.ts"
+compatibility_date = "2024-07-29"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[vars]
+ALLOWED_ORIGINS = "*"
+
+[[durable_objects.bindings]]
+name = "RELAY_DO"
+class_name = "RelayDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayDO"]
+
+[observability]
+enabled = true

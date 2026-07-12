@@ -1,0 +1,29 @@
+{
+  "name": "@dispatch-freebuff/daemon",
+  "version": "0.1.0",
+  "description": "PC daemon: relays Freebuff terminal output to your phone via Cloudflare Worker.",
+  "bin": {
+    "dispatch": "dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:node-pty --external:ws",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "node-pty": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.21.5",
+    "tsx": "^4.10.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
