@@ -187,16 +187,31 @@ export class RelayDO {
     const entries = await this.state.storage.list({ prefix: 'push:' });
     const message = {
       data: JSON.stringify({ title: 'DispatchFreeBuff', body: 'freebuff terminou — a resposta está pronta' }),
-      options: { ttl: 300 },
+      // 300s (the previous value) meant a phone asleep/backgrounded for more
+      // than 5 minutes when freebuff finished never got the notification at
+      // all -- Apple's push relay drops anything past its TTL rather than
+      // holding it for the next time the device wakes. A few hours is still
+      // "this is worth telling you" without going stale.
+      options: { ttl: 6 * 60 * 60 },
     };
+    console.log(`[push] sending to ${entries.size} subscription(s)`);
     for (const [key, subscription] of entries) {
       try {
         const payload = await buildPushPayload(message, subscription as WebPushSubscription, vapid);
         // payload.body is a Uint8Array — a valid fetch() BodyInit at runtime;
         // the mismatch is @block65's own Uint8Array<T> vs workers-types' lib.
         const res = await fetch((subscription as WebPushSubscription).endpoint, payload as RequestInit);
-        if (res.status === 404 || res.status === 410) await this.state.storage.delete(key); // gone — stop trying
-      } catch {}
+        if (res.status === 404 || res.status === 410) {
+          console.log(`[push] ${key} gone (${res.status}) — deleting subscription`);
+          await this.state.storage.delete(key);
+        } else if (!res.ok) {
+          console.error(`[push] ${key} failed: ${res.status} ${await res.text().catch(() => '')}`);
+        } else {
+          console.log(`[push] ${key} delivered`);
+        }
+      } catch (e) {
+        console.error(`[push] ${key} threw: ${(e as Error).message}`);
+      }
     }
   }
 }
