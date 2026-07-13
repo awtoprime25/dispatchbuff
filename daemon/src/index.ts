@@ -215,19 +215,33 @@ class RelaySocket {
       }
     });
     this.ws.on('error', () => {});
-    // WS upgrade rejected by relay (HTTP 4xx/5xx): don't loop forever — stop
-    // and tell the user how to recover.
+    // WS upgrade rejected by relay. 401/403 means the token itself is bad
+    // (expired/revoked) — retrying won't help, stop and tell the user how to
+    // recover. Anything else (5xx, a transient blip mid `wrangler deploy`
+    // recycling the Durable Object, etc.) is the relay's problem, not the
+    // token's — confirmed by a real outage where a deploy-timed 500 was
+    // treated as "token invalid" and killed a perfectly healthy session.
+    // Retry those with the same backoff as a normal disconnect.
     (this.ws as any).on?.('unexpected-response', (_req: any, res: any) => {
-      this.dying = true;
-      this.alive = false;
       this.stopHeartbeat();
       console.error(`[daemon] relay rejected the connection: HTTP ${res.statusCode} ${res.statusMessage ?? ''}`.trim());
-      console.error('  This usually means the daemon token is invalid or the relay evicted our session.');
-      console.error('  Fix: `dispatch revoke` → `rm ~/.dispatch/config.json` → `dispatch init` → `dispatch pair` → `dispatch start`');
-      this.closeHandler();
       try { res.resume(); } catch {}
-      // Exit so the user sees the error and the freebuff child is cleaned up.
-      setTimeout(() => process.exit(1), 300);
+      if (res.statusCode === 401 || res.statusCode === 403) {
+        this.dying = true;
+        this.alive = false;
+        console.error('  This usually means the daemon token is invalid or the relay evicted our session.');
+        console.error('  Fix: `dispatch revoke` → `rm ~/.dispatch/config.json` → `dispatch init` → `dispatch pair` → `dispatch start`');
+        this.closeHandler();
+        // Exit so the user sees the error and the freebuff child is cleaned up.
+        setTimeout(() => process.exit(1), 300);
+        return;
+      }
+      console.error('  Not an auth error — retrying.');
+      this.closeHandler();
+      if (this.alive) {
+        const delay = Math.min(30_000, 500 * Math.pow(2, ++this.attempts));
+        setTimeout(() => this.connect(), delay);
+      }
     });
   }
   private startHeartbeat() {
