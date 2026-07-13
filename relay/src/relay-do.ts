@@ -192,7 +192,11 @@ export class RelayDO {
       // all -- Apple's push relay drops anything past its TTL rather than
       // holding it for the next time the device wakes. A few hours is still
       // "this is worth telling you" without going stale.
-      options: { ttl: 6 * 60 * 60 },
+      // urgency 'high' asks APNs to prioritize delivery even under Low Power
+      // Mode -- no delivery guarantee is absolute on iOS (native push rides
+      // the same APNs pipe and is subject to the same OS throttling), but
+      // this is the one lever the Web Push protocol actually exposes.
+      options: { ttl: 6 * 60 * 60, urgency: 'high' },
     };
     console.log(`[push] sending to ${entries.size} subscription(s)`);
     for (const [key, subscription] of entries) {
